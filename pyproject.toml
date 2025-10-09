@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sensorbike"
+description = "Load and filter data collected from the Gazelle/Bosch Balance Assist Bicycles"
+readme = "README.md"
+version = "2.0.0"
+license = {file = "LICENSE"}
+authors = [
+	{name = "Christoph M. Konrad", email = "c.m.schmidt@tudelft.nl"},
+	{name = "Anna Marbus"}
+]
+requires-python = ">3.11"
+dependencies = [
+	"numpy",
+	"sympy",
+	"matplotlib",
+	"scipy",
+	"datetime",
+	"pandas",
+	"scikit-learn",
+	"asammdf",
+	"trajdatamanager",
+	"filterpy",
+	"bicycleparameters"
+]
+	
+[tool.setuptools.packages.find]
+where = ["src"]  
