@@ -1,0 +1,37 @@
+general:
+    dir_base: data
+    experiment_name: testdata
+    trial_name: trial1
+    filename_can: '00001028\\00000001.MF4'
+    t_s: 0.01
+    gnss_position_params:
+        h_gnss: 0.94 # height of the antenna (box upper edge) above ground at zero roll angle
+        l_gnss: 0.17 # horizontal distance between antenna and rear-wheel contact point
+filter_settings:
+    integration_method: midpoint
+    measurement_noise_std: 
+        GNSS:
+            x: 0.1
+            y: 0.1
+        IMU: #Datasheet values from https://docs.sparkfun.com/SparkFun_VR_IMU_Breakout_BNO086_QWIIC/assets/component_documentation/BNO080_085-Datasheet_v1.16.pdf
+            roll: 0.061
+            yaw: 0.061
+            gyro: 0.054
+            accel: 0.30
+        speedometer:
+            v: 0.05
+        steerencoder:
+            rate: 0.05
+            angle: 0.03
+    process_noise_std:
+        x: 0.001
+        y: 0.001
+        psi: 0.001
+        dpsi: 0.01
+        phi: 0.00001 # force roll to follow dynamics rather then measurement
+        dphi: 0.00005 # force roll to follow dynamics rather then measurement
+        delta: 0.01
+        ddelta: 0.05
+        v: 0.001
+        dv: 0.05
+    
