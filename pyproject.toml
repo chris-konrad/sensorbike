@@ -22,10 +22,16 @@ dependencies = [
 	"pandas",
 	"scikit-learn",
 	"asammdf",
-	"trajdatamanager",
 	"filterpy",
 	"bicycleparameters"
 ]
+
+
+[project.optional-dependencies]
+ownpackages = [
+	"trajdatamanager"
+]
+
 	
 [tool.setuptools.packages.find]
 where = ["src"]  

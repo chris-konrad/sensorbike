@@ -1,6 +1,7 @@
 # Sensorbike: Postprocessing data captured from the instrumented Gazelle/Bosch Balance Assist Bicycles
 
-This repository contains software to load and postprcocess data captured from the instrumented Gazelle/Bosch Balance Assist Bicycles. It enables to:
+This repository contains software to load and postprcocess data captured from the instrumented Gazelle/Bosch Balance Assist Bicycles. It enables to conveniently execute the full processing pipline outlined below and provides an environment to excute individual steps of the 
+pipeline only. 
 
 - Decode Swiftnav binary files and apply RTK corrections to GNSS data. (via RTKLib).
 
@@ -15,13 +16,13 @@ This repository contains software to load and postprcocess data captured from th
 - Apply an Unscented Kalman Filter to the trajectory data to ensure consistency of GNSS and OBU data. 
 
 > [!tip]
-> The loaded data is made available as a `Track` object from the `trajdatamanager` toolbox. [This toolbox] enables easy highlevel trajectory operations like cropping, spatial filltering, subsampling, and plotting while supporting full `datetime.datetime` timestamps. However, it is still under development and doesn't have great documentation. If you prefer not to use the toolbox, get the data from the Track object as a dict `Track.to_dict()` or access the data array directly at `Track.data`. To retrieve individual features, Track objects can be accessed like a dictionary `Track['feature_name']`.
+> The loaded data is made available as a `Track` object from the [`trajdatamanager`](https://github.com/chris-konrad/trajdatamanager) toolbox. [This toolbox] enables easy highlevel trajectory operations like cropping, spatial filltering, subsampling, and plotting while supporting full `datetime.datetime` timestamps. However, it is still under development and doesn't have great documentation. If you prefer not to use the toolbox, get the data from the Track object as a dict `Track.to_dict()` or access the data array directly at `Track.data`. To retrieve individual features, Track objects can be accessed like a dictionary `Track['feature_name']`. Deconding CAN files to csv can be done without the [`trajdatamanager`](https://github.com/chris-konrad/trajdatamanager) dependency using only this packages `canbus` module.
 
 ## Installation
 
 Install the package and it's dependencies. Refer to `pyproject.toml` for an overview of the dependencies. 
 
-1. Install `trajdatamanager`. See the its repository for installation instructions.
+1. Install [`trajdatamanager`](https://github.com/chris-konrad/trajdatamanager). See the repository for installation instructions. This is only required if you use the `bikedata` module. If you only want to decode CAN logs, you may skip this step. 
 
 2. Clone this repository.
    
@@ -81,7 +82,7 @@ Store the raw, encoded data (i.e. the `.M4F` files from the CAN logger and the `
         └── motorcan.dbc
 ```
 
-Note, that you also require the `.dbc` CAN bus definition to enable decoding the CAN data and GNSS correction data as well as an RTKLib configuration file for apply RTK corrections to the GNSS data. 
+Note, that you require the `.dbc` CAN bus definition to enable decoding the CAN data and GNSS correction data as well as an RTKLib configuration file for apply RTK corrections to the GNSS data. Find the CAN bus definition `motorcan.dbc` in the Balance Assist Bicycle directory of the lab drive. 
 
 ### Applying RTK-GNSS Corrections
 
@@ -89,13 +90,34 @@ Corrections to the GNSS data must be applied separately and externally to this t
 
 ## Using this toolbox
 
-The most basic usage is demonstrated by `example.py` in the example toolbox. This includes a example `yaml` file for coniguration. More instructions and examples will follow ...
+You can either run the full pipeline or individual steps.
+
+### Full data processing
+[COMING SOON] The most basic usage is demonstrated by `example.py` in the example toolbox. This includes a example `yaml` file for coniguration. More instructions and examples will follow ...
+
+### Decoding CAN-files only
+You can decode and import CAN logs into a python environment without using the full data processing pipeline.
+For this, you need the filepath to the CAN file
+
+```python
+import sensorbike.canbus as can
+df = can.process_can_edge(
+    [FILEPATH_TO_CAN_LOG_FILE],
+    {"LIN": [(FILEPATH_TO_DBC_FILE, 0)], "CAN": [(FILEPATH_TO_DBC_FILE, 0)]},
+)
+```
+
+Additionally, this package includes the script `scripts/can2csv.py` that decodes CAN log files and exports them to csv. 
+Use it as below and call `--help` for more info on the arguments. 
+```
+> python can2csv.py [-h] [-d DBC_FILEPATH] [-l LOG_DIRECTORY_OR_FILEPATH] [-o OUTDIR] [-f OUTFILENAME] [-m]
+```
 
 ## Authors
 
 - Christoph M. Konrad, c.m.schmidt@tudelft.nl
-- Anna Marbus [Partgit  of this toolbox (CAN decoding) was taken from [bicycle-loc-and-state](https://gitlab.tudelft.nl/bicyclelab/bicycle-loc-and-state), developed during her research project.]
+- Anna Marbus [Part of this toolbox (CAN decoding) was taken from [bicycle-loc-and-state](https://gitlab.tudelft.nl/bicyclelab/bicycle-loc-and-state), developed during her research project.]
 
 ## License
 
-The correction data was originally openly published by [TU Delft](https://gnss1.tudelft.nl/dpga/) without a license and is included here for convenience.
+This package is licensed under the terms of the [MIT license](https://github.com/chrismo-konrad/sensorbike/blob/main/LICENSE).

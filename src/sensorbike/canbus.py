@@ -21,6 +21,8 @@ https://repository.tudelft.nl/record/uuid:092f3b70-2d97-436e-b193-139a593e09c7
 @author: Christoph M. Konrad
 """
 
+
+import os
 import asammdf
 
 def process_can_edge(logfiles, databases):
@@ -55,4 +57,59 @@ def process_can_edge(logfiles, databases):
                                           time_as_date=True)
     
     return df_can_edge
+
+
+def verify_filepath_dbc(filepath):
+    """ Check if the given filepath points to a .dbc file.
+    """
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"Can't find file {filepath}.")
+    elif not filepath.lower().endswith('.dbc'):
+        raise TypeError(f"File {filepath} is not a .dbc file.")
+    else:
+        return filepath
+    
+
+def verify_filepath_mf4(filepath):
+    """ Check if the given filepath points to a .mf4 file.
+    """
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"Can't find file {filepath}.")
+    elif not filepath.lower().endswith('.mf4'):
+        raise TypeError(f"File {filepath} is not a .mf4 file.")
+    else:
+        return filepath
+    
+
+def list_canlogs(directory, verbose=False):
+    """ List all CAN log files (ending with .mf4) in 
+    a given directory and its subdirectories.
+
+    Parameters
+    ----------
+    directory : str
+        The directory to look in.
+    verbose : bool, optional
+        Print log file list, default is False.
+    
+    Returns
+    -------
+
+    """
+    logfiles = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.lower().endswith('.mf4'):
+                full_path = os.path.join(root, file)
+                relative_path = os.path.relpath(full_path, directory)
+                logfiles.append(relative_path)
+    logfiles = sorted(logfiles)
+    
+    if verbose:
+        print(f'Found {len(logfiles)} CAN logs in {directory}:')
+        for i, f in enumerate(logfiles):
+            print(f'    {i:<3}: {f}')
+    
+    return logfiles
+
 
