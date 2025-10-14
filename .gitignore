@@ -96,3 +96,6 @@ target/
 
 # older versions
 archive
+
+# private data
+data_private
