@@ -79,7 +79,7 @@ def main():
     for f in filepaths_logs:
             print(f"   {f}")
             df_i = can.process_can_edge(
-                    filepaths_logs,
+                    [f],
                     {"LIN": [(filepath_dbc, 0)], "CAN": [(filepath_dbc, 0)]})
             df_list.append(df_i)
 
