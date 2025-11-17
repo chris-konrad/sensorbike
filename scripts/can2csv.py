@@ -21,11 +21,12 @@ def parse_args():
     parser.add_argument('-l', '--logs', type=str, help=('File path of a single .mf4 CAN log file or a '
                                                         'directory which contains log files. If a directory is'
                                                         ' supplied. The directory and all subdirectories will '
-                                                        'be searched for .mf4 files. Multiple files will be '
+                                                        'be searched for .mf4 files. '))
+    parser.add_argument('-a', '--append', action='store_true', help='If True, multiple .mf4 files will be '
                                                         'appended to the same .csv. in alphabetical order. Only '
-                                                        'supply a directory of log files if they are consecutive!'))
+                                                        'select if files are consecutive! Otherwise, an individual '
+                                                        '.csv file will be created for each .mf4 file.')
     parser.add_argument('-o', '--outdir', type=str, default='input directory', help='The output directory')
-    parser.add_argument('-f', '--outfilename', type=str, default='input filename', help='The output filename')
     parser.add_argument('-m', '--mute', action='store_true', help='Mutes verbosity.')
     
     return parser.parse_args()
@@ -50,23 +51,59 @@ def main():
             print(f"Found 1 log file:")
             print(f"      1: {filepaths_logs[0]}")
 
+
+
+    # output directories
+    if args.outdir == 'input directory':
+        dirs_out = [os.path.dirname(f) for f in filepaths_logs]
+    else:
+        dirs_out = [str(args.outdir)] * len(filepaths_logs) 
+
+    # output names
+    filenames_out = []
+    for f in filepaths_logs:
+        if args.outdir == 'input directory' and not args.append:
+            filename_out = os.path.splitext(os.path.basename(filepaths_logs[0]))[0]
+            filename_out += ".csv"
+        else:            
+            n0 = os.path.normpath(os.path.splitext(filepaths_logs_rel[0])[0])
+            n0 = n0.replace(os.sep, '-')
+            n0 = n0 + ".csv"
+            filename_out = n0
+        filenames_out.append(filename_out)
+
     # decode can files
     df_list = []
     if not args.mute:
         print("Decoding ...")
     for f in filepaths_logs:
+            print(f"   {f}")
             df_i = can.process_can_edge(
                     filepaths_logs,
                     {"LIN": [(filepath_dbc, 0)], "CAN": [(filepath_dbc, 0)]})
             df_list.append(df_i)
-    
-    df = pd.concat(df_list, ignore_index=True)
+
+    # append
+    if args.append:
+        # Warn
+        if len(df_list) > 1 and not args.mute:
+            print((f"WARNING: Concatenating multiple log files in alphabetical order."
+                f" This only makes sense if the log files contain directly consecutive"
+                f" logs without breaks! Consider converting individual files if unsure."))
+
+        df_list = [pd.concat(df_list, ignore_index=True)]
+        # out directory
+        if args.outdir == 'input directory':
+            dirs_out = [args.logs]
+        else: 
+            dirs_out = [dirs_out[0]]
+        # out filename
+        filenames_out = [f"{filenames_out[0][:-4]}_{filenames_out[1][:-4]}"]
+
     if not args.mute:
-        print("    done!")
+        print("   done!")
 
     # choose measurements and rename
-    if not args.mute:
-        print("Extracting kinematics ...")
     MEASUREMENTS_TO_EXTRACT = {
         'gyro_z': 'gyro_z_rad/s',
         'gyro_y': 'gyro_y_rad/s',
@@ -81,56 +118,35 @@ def main():
         'LWS_ANGLE': 'steer_deg',
         'LWS_SPEED': 'steer_rate_deg/s',
     }
-    df = df[list(MEASUREMENTS_TO_EXTRACT.keys())]
-    df = df.rename(MEASUREMENTS_TO_EXTRACT)
+
     if not args.mute:
-        print("    done!")
+        print("Extract kinematics and write to csv ...")
 
+    for df, dir_out, fname_out in zip(df_list, dirs_out, filenames_out):
+        
+        # filepath for writing
+        if not os.path.isdir(dir_out):
+            os.makedirs(dir_out)
+            if not args.mute:
+                print(f'   Created missing output directory {dir_out}')
+        
+        if not filename_out.endswith('.csv'):
+            filename_out += '.csv'
 
-    # output directory and filename
-    if args.outdir == 'input directory':
-        if os.path.isdir(args.logs):
-            dir_out = args.logs
-            dir_out = os.path.dirname(args.logs)
-    else:
-        dir_out = os.path.dirname(args.outdir)
-
-    if not os.path.isdir(args.outdir):
-        os.makedirs(args.outdir)
+        filepath_out = os.path.join(dir_out, fname_out)
         if not args.mute:
-            print(f'Created missing output directory {dir_out}')
+            print(f'   {filepath_out}')
 
-    if args.outfilename == 'input filename':
-        if len(filepaths_logs)==1:
-            filename_out = os.path.splitext(os.path.basename(filepaths_logs[0]))[0]
-        else:            
-            n0 = os.path.normpath(os.path.splitext(filepaths_logs_rel[0])[0])
-            n0 = n0.replace(os.sep, '-')
-            n1 = os.path.normpath(os.path.splitext(filepaths_logs_rel[-1])[0])
-            n1 = n1.replace(os.sep, '-')
-            filename_out = f"{n0}_{n1}"
-        filename_out += ".csv"
-    else:
-        filename_out = args.outfilename
-    
-    if not filename_out.endswith('.csv'):
-        filename_out += '.csv'
 
-    filepath_out = os.path.join(dir_out, filename_out)
+        #extract kineamtics
+        df = df[list(MEASUREMENTS_TO_EXTRACT.keys())]
+        df = df.rename(MEASUREMENTS_TO_EXTRACT)
 
-    # save
-    if not args.mute:
-        print(f'Writing measurements to {filepath_out}')
-    df.to_csv(filepath_out, sep=';')
-    if not args.mute:
-        print("    done!")
-
-    # Warn
-    if not args.mute:
-        if len(filepaths_logs)>1:
-            print((f"WARNING: Concatenated multiple log files in alphabetical order."
-                   f"This only makes sense if the log files contain directly consecutive"
-                   f" logs without breaks! Consider converting individual files if unsure."))
+        # save
+        df.to_csv(filepath_out, sep=';')
+        
+        if not args.mute:
+            print("   done!")
 
 
 if __name__ == "__main__":
