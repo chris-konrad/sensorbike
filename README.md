@@ -84,6 +84,10 @@ Store the raw, encoded data (i.e. the `.M4F` files from the CAN logger and the `
 
 Note, that you require the `.dbc` CAN bus definition to enable decoding the CAN data and GNSS correction data as well as an RTKLib configuration file for apply RTK corrections to the GNSS data. Find the CAN bus definition `motorcan.dbc` in the Balance Assist Bicycle directory of the lab drive. 
 
+Additionally, the bicycle paramters of the Balance Assist Bicycles are required for good UKF filter results.
+These are not included in this repository and must be obtained from bicycleparameter like shown
+here https://bicycleparameters.readthedocs.io/stable/gallery/examples/plot_balanceassistv1.html.
+
 ### Applying RTK-GNSS Corrections
 
 Corrections to the GNSS data must be applied separately and externally to this toolbox. Refer to [swiftnav-processing](https://github.com/chris-konrad/swiftnav_processing) for instructions and the necessary software. 
@@ -93,7 +97,7 @@ Corrections to the GNSS data must be applied separately and externally to this t
 You can either run the full pipeline or individual steps.
 
 ### Full data processing
-[COMING SOON] The most basic usage is demonstrated by `example.py` in the example toolbox. This includes a example `yaml` file for coniguration. More instructions and examples will follow ...
+The most basic usage is demonstrated by `example_full-pipeline.py` in the example toolbox. This includes a example `yaml` file for coniguration. More instructions and examples will follow ...
 
 ### Decoding CAN-files only
 You can decode and import CAN logs into a python environment without using the full data processing pipeline.
@@ -107,10 +111,10 @@ df = can.process_can_edge(
 )
 ```
 
-Additionally, this package includes the script `scripts/can2csv.py` that decodes CAN log files and exports them to csv. 
+Additionally, this package includes the script `scripts/decode_can.py` that decodes CAN log files and exports them to csv or parquet. 
 Use it as below and call `--help` for more info on the arguments. 
 ```
-> python can2csv.py [-h] [-d DBC_FILEPATH] [-l LOG_DIRECTORY_OR_FILEPATH] [-o OUTDIR] [-f OUTFILENAME] [-m]
+> python decode_can.py [-h] [-d DBC_FILEPATH] [-l LOG_DIRECTORY_OR_FILEPATH] [-o OUTDIR] [-f FORMAT] [-m]
 ```
 
 ## Authors
