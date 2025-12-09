@@ -15,6 +15,7 @@ This module was copied and modifed from rcid.ukf by Christoph Konrad.
 import numpy as np
 import matplotlib.pyplot as plt
 import sympy as sm
+import warnings
 
 from filterpy.kalman import UnscentedKalmanFilter, MerweScaledSigmaPoints
 
@@ -22,7 +23,12 @@ from bicycleparameters.parameter_dicts import meijaard2007_browser_jason
 from bicycleparameters.parameter_sets import Meijaard2007ParameterSet
 from bicycleparameters.models import Meijaard2007Model
 
-from sensorbike.bicycleparameters.balanceassist_params import bike_with_rider
+
+def warn_wrong_parameters():
+    warnings.warn((f"Using bicycleparameters default 'meijaard2007_browser_jason' parameters. These"
+                f" are not the parameters of the Balance Assist Bikes. Replace 'bicycle_parameter_dict'" 
+                f" in the filter settings with the parameters found in https://github.com/moorepants/BicycleParameters/blob/master/data/riders/Jason/Parameters/JasonBalanceassistv1Benchmark.txt"
+                f" to use the Balance Assist Bicycle Parameters."))
 
 
 def get_statespace_matrices(bp_model, v):
@@ -202,7 +208,8 @@ def get_default_filter_settings():
     """
     
     filter_settings = {"integration_method": "midpoint",
-                       "bicycle_parameter_dict": bike_with_rider}
+                       "bicycle_parameter_dict": meijaard2007_browser_jason}
+    warn_wrong_parameters()
     
     sensor_char = {"GNSS": {"x": 0.1, "y": 0.1},
                    "IMU": {"roll": 0.061,
@@ -221,8 +228,8 @@ def get_default_filter_settings():
                            "ddelta": 0.05, "v": 0.001, "dv": 0.05}
     
     filter_settings['process_noise_std'] = \
-        make_Qscale_from_dict(process_noise_dict)  
-    
+        make_Qscale_from_dict(process_noise_dict)   
+
     return filter_settings
 
 
@@ -277,7 +284,8 @@ def parse_filter_settings(filter_settings_yaml_dict,
     
     
     if bicycle_parameter_dict is None:
-        bicycle_parameter_dict = bike_with_rider
+        bicycle_parameter_dict = meijaard2007_browser_jason
+        warn_wrong_parameters()
     
     filter_settings = {"integration_method": 
                            filter_settings_yaml_dict["integration_method"],
@@ -565,6 +573,7 @@ def filter_dynamic(measurements, R, Q, t_s=0.01, smooth = True, plot = True,
     
     if bicycle_parameter_dict is None:
         bicycle_parameter_dict = meijaard2007_browser_jason
+        warn_wrong_parameters()
         
     bp_param = Meijaard2007ParameterSet(bicycle_parameter_dict, True)
     bp_model = Meijaard2007Model(bp_param)
