@@ -534,9 +534,9 @@ class InstrumentedBicycleData():
             of the bicycle dynamics. The dictionary is expected to be in the 
             format defined by BicycleParameters (https://github.com/moorepants/
             BicycleParameters/tree/master). The parameters should be measured 
-            from the actual bicycle used to collect the data. The parameters
-            of the instrumented bicycle used by defaul are stored in 
-            sensorbike.bicycleparameters.bike_with_rider. 
+            from the actual bicycle used to collect the data. Uses
+            meijaard2007_browser_jason per default which are not correct for the
+            balance assist bicycle.
         verbose : bool, optional
             Verbose output. The default is True.
         plot_data : bool, optional
