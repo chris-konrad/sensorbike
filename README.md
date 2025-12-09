@@ -115,7 +115,7 @@ Use it as below and call `--help` for more info on the arguments.
 
 ## Authors
 
-- Christoph M. Konrad, c.m.schmidt@tudelft.nl
+- Christoph M. Konrad, c.m.konrad@tudelft.nl
 - Anna Marbus [Part of this toolbox (CAN decoding) was taken from [bicycle-loc-and-state](https://gitlab.tudelft.nl/bicyclelab/bicycle-loc-and-state), developed during her research project.]
 
 ## License
