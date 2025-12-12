@@ -21,16 +21,19 @@ dependencies = [
 	"datetime",
 	"pandas",
 	"scikit-learn",
-	"asammdf",
 	"filterpy",
 	"bicycleparameters",
-	"pyarrow"
+	"pyarrow",
+	"trajdatamanager"
 ]
 
 
 [project.optional-dependencies]
-ownpackages = [
-	"trajdatamanager"
+cl2000 = [
+	"cantools"
+]
+canedge2 = [
+	"asammdf"
 ]
 
 	

@@ -23,7 +23,7 @@ https://repository.tudelft.nl/record/uuid:092f3b70-2d97-436e-b193-139a593e09c7
 
 
 import os
-import asammdf
+
 
 def process_can_edge(logfiles, databases):
     """
@@ -47,6 +47,7 @@ def process_can_edge(logfiles, databases):
         Dataframe of the can decoded can log
     """
     # Concatenate the MDF log files
+    import asammdf
     mdf = asammdf.MDF.concatenate(logfiles)
     
     # Extract bus logging data using the specified databases
