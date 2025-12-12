@@ -45,12 +45,13 @@ def main():
 
     filepaths_logs = []
     if os.path.isdir(args.logs):
-        filepaths_logs_rel = can.list_canlogs(args.logs, verbose=not args.mute)
+        filepaths_mf4logs_rel, filepath_txtlogs_rel = can.list_canlogs(args.logs, verbose=not args.mute)
+        filepaths_logs_rel = filepaths_mf4logs_rel+filepath_txtlogs_rel
         filepaths_logs = [os.path.join(args.logs, f) for f in filepaths_logs_rel]
         if len(filepaths_logs)==0:
              raise FileNotFoundError(f"No CAN logs found in {args.logs}!")
     else:
-        filepaths_logs = [can.verify_filepath_mf4(args.logs)]
+        filepaths_logs = [can.verify_filepath_can(args.logs)]
         if not args.mute:
             print(f"Found 1 log file:")
             print(f"      1: {filepaths_logs[0]}")
@@ -80,9 +81,7 @@ def main():
         print("Decoding ...")
     for f in filepaths_logs:
             print(f"   {f}")
-            df_i = can.process_can_edge(
-                    [f],
-                    {"LIN": [(filepath_dbc, 0)], "CAN": [(filepath_dbc, 0)]})
+            df_i = can.process_can(f, filepath_dbc)
             df_list.append(df_i)
 
     # append
