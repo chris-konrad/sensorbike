@@ -28,13 +28,14 @@ import sympy.physics.mechanics as me
 
 from scipy.signal import correlate
 from sklearn.linear_model import RANSACRegressor
+from pathlib import Path
 
 # own imports
 from trajdatamanager.datamanager import RTKLibGNSSManager, Track, DataManager
 
 # local imports
 from sensorbike.ukf import filter_dynamic, get_default_filter_settings
-from sensorbike.canbus import process_can_edge
+from sensorbike.canbus import process_can_edge, decode_parquet, verify_filepath_dbc
 
 
 class InstrumentedBicycleData():
@@ -54,13 +55,13 @@ class InstrumentedBicycleData():
         dir_base,
         experiment_name,
         trial_name,
-        filename_can,
-        gnss_position_params, 
+        gnss_position_params = dict(h_gnss=0.94, l_gnss=0.17),
+        filename_can = None,
         t_s = None,
         subdir_bike_gnss_solution=None,
         subdir_bike_gnss_report=None,
         subdir_bike_can=None,
-        filename_dbc = "motorcan.dbc",
+        filepath_dbc = None,
         rotation = 67,
         reference_location = [51.999370, 4.370451],
         filter_settings = None,
@@ -101,11 +102,17 @@ class InstrumentedBicycleData():
             Name of the experiment / subdirectory of the data.
         trial_name : str
             An arbitrary name for this trial.
-        filename_can : str
-            The filname (or sub-path) of the CAN-logging .M4F file. E.g.
-            '00001024//00000001.MF4'
-        gnss_position_params : TYPE
-            DESCRIPTION.
+        gnss_position_params : dict, optional
+            A dictionary describing the position of the GNSS antenna:
+                hb : height [m] of the GNSS antenna above ground when the bicycle is upright. Default is 0.94 m
+                lb : horizontal distance [m] between GNSS antenna and the rear wheel contact patch. Default is 0.17 m
+            The default corresponds to the setup used for the zigzag experiment (without antenna post).
+        filename_can : str, optional
+            The filname (or sub-path) of a specific (coded or decoded) CAN log file. 
+            Can be a decoded log in .parquet format or coded logs in .MF4 format. If 
+            .MF4, the CAN bus definition (filepath_dbc) must be given as well. 
+            If not specified, all CAN files in subdir_bike_can are loaded and stitched together.
+            Example for a single file: '00001024//00000001.MF4'
         t_s : float, optional
             Desired sample period of the data after loading. If None, the 
             CAN sample period is used. The default is None.
@@ -118,9 +125,8 @@ class InstrumentedBicycleData():
         subdir_bike_can : str, optional
             Subdirectory of the can-log. The default is 
             experiment_name//can-logger.
-        filename_dbc : str, optional
-            DBC definition file name to decode the CAN bus log. 
-            The default is "motorcan.dbc".
+        filepath_dbc : str, optional
+            Path to the CAN bus definition file (.dbc) to decode the CAN bus log. 
         rotation : float, optional
             Rotation in deg of the local reference frame w.r.t North. 
             The default is 67.
@@ -136,7 +142,6 @@ class InstrumentedBicycleData():
             Transform GNSS locations to the rear-wheel contact point of the 
             bicycle. The default is True.
         """
-
 
         # set up paths and directories
 
@@ -161,7 +166,7 @@ class InstrumentedBicycleData():
         self.subdir_bike_gnss_solution = subdir_bike_gnss_solution
         self.subdir_bike_gnss_report = subdir_bike_gnss_report
         self.subdir_bike_can = subdir_bike_can
-        self.filename_dbc = filename_dbc
+        self.filepath_dbc = filepath_dbc
         self.filename_can = filename_can
         self.t_s = t_s
         self.name = f"{self.experiment_name}/{self.trial_name}"
@@ -361,16 +366,27 @@ class InstrumentedBicycleData():
         dir_bike_gnss_report = os.path.join(
             self.dir_base, self.subdir_bike_gnss_report
         )
-        path_dbc = os.path.join(dir_can_log, self.filename_dbc)
 
         # create datamanager
         dataman = BalanceAssistLogDataManager(
-            dir_can_log, dir_bike_gnss_report, path_dbc, self.bike_geom, **self.can_data_settings
+            dir_can_log, dir_bike_gnss_report, self.filepath_dbc, self.bike_geom, **self.can_data_settings
         )
 
-        # load the full track and segment into runs
-        trk_can = dataman.load_track(self.filename_can, self.filenames_bike_gnss)
-        #trk_can = self.segment_runs(bike_dynamic_data, "bikedyn")
+        # load the full track 
+        if os.path.isfile(self.filename_can):
+            can_files = [self.filename_can]
+        else:
+            ftypes = ['.parquet', '.mf4', '.txt']
+            for ftype in ftypes:
+                can_files = Path(dir_can_log).glob(f"*{ftype}")
+                if can_files:
+                    break
+            if len(can_files) == 0:
+                raise FileNotFoundError(f"Didn't find any CAN logs in {dir_can_log}! Searched for: {ftypes}")
+
+        trk_can = dataman.load_track(can_files, self.filenames_bike_gnss)
+
+
         
         return trk_can
         
@@ -822,25 +838,35 @@ class BalanceAssistLogDataManager(DataManager):
         """
         
         super().__init__(path_can_log)
-        self.dbc_file = dbc_file
+        self.dbc_file = verify_filepath_dbc(dbc_file)
         self.dir_gnss_report = path_gnss_report
         self.bike_geom = bike_geometry
         self.steer_angle_bias = steer_angle_bias
         self.ins_filename_suffix = ins_filename_suffix
 
-    # def load_sequence(self):
-    #    for path, folders, files in os.walk(self.dir):
-    #        test = 100
 
-    def load_track(self, filename_can, filenames_bike_gnss):
+    def _load_can_logs(self, can_files):
+        """ Load a list of can_files into a single data frame. """
+        if can_files[0].lower().endswith('.mf4'):
+            can_files = [os.path.join(self.dir, f) for f in can_files]
+            data = process_can_edge(can_files, {"LIN": [(self.dbc_file, 0)], "CAN": [(self.dbc_file, 0)]})
+        elif can_files[0].lower().endswith('.parquet'):
+            data = pd.concat([decode_parquet(f) for f in can_files], ignore_index=True)
+        else:
+            raise NotImplementedError(f"Loading CAN logs of filetype {can_files[0]} is not supported!")
+        
+        return data
+
+
+    def load_track(self, can_files, filenames_bike_gnss):
         """
         Load a Track object holding the trajectories captured from the CAN bus.
 
         Parameters
         ----------
-        filename_can : str
-            The filname (or sub-path) of the CAN-logging .M4F file. E.g.
-            '00001024//00000001.MF4'
+        can_files : str
+            A list containing the can log files. If the list contains multiple files, the logs are stitched together.
+            Can be .mf4 or decoded .parquet files. example: ['00001024//00000001.MF4']
         filenames_bike_gnss : list
             List of gnss solution filenames. 
 
@@ -851,10 +877,7 @@ class BalanceAssistLogDataManager(DataManager):
         """
 
         # extract CAN data
-        df = process_can_edge(
-            [os.path.join(self.dir, filename_can)],
-            {"LIN": [(self.dbc_file, 0)], "CAN": [(self.dbc_file, 0)]},
-        )
+        df = self._load_can_logs(can_files)
 
         t_can = np.array(df.index)
         t_can = np.array([(ti - t_can[0]).total_seconds() for ti in t_can])
@@ -1082,9 +1105,9 @@ class InstrumentedBikeGeometry:
         bike_params : dict
             A dictionary containing the bicycle dimensions. Must contain the 
             dimensions: 
-                hb : height of the GNSS antenna above ground when the
+                h_gnss : height of the GNSS antenna above ground when the
                 bicycle is upright.
-                lb : horizontal distance between GNSS antenna and the rear
+                l_gnss : horizontal distance between GNSS antenna and the rear
                 wheel contact patch. 
         """
         
