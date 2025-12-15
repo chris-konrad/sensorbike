@@ -297,3 +297,39 @@ def rename_canlog_columns(df):
     df = df.rename(MEASUREMENTS_TO_EXTRACT)
     return df
 
+
+def decode_parquet(logfile):
+    """ Decode a parquet CAN log file.
+
+    Parameters
+    ----------
+    logfile : str
+        Filepath of the CAN log file
+
+    Returns
+    -------
+    df : DataFrame
+        Logs
+    """
+
+    df = pd.read_parquet(logfile)
+
+    keys = {
+        'gyro_z_rad/s': 'gyro_z',
+        'gyro_y_rad/s': 'gyro_y',
+        'gyro_x_rad/s': 'gyro_x', 
+        'accel_z_m/s2': 'accel_z', 
+        'accel_y_m/s2': 'accel_y', 
+        'accel_x_m/s2': 'accel_x', 
+        'yaw_rad': 'yaw', 
+        'pitch_rad': 'pitch', 
+        'roll_rad': 'roll', 
+        'wheelspeed_rear_rev/s': 'ws_rear', 
+        'steer_deg': 'LWS_ANGLE', 
+        'steer_rate_deg/s': 'LWS_SPEED'}
+    
+    df.rename(columns=keys, inplace=True)
+
+    return df
+
+
