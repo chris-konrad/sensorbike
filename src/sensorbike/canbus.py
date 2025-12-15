@@ -7,12 +7,7 @@ canbus
 
 Module for decoding data logs from the CAN bus. 
 
-Currently only supports data logged with the CAN Edge 2 logger. The CAN
-CL2000 is not supported 
-
-TODO: Copy the CL2000 processing code from Annas Repo to here.
-
-This code is copied from the bicycle_loc_and_state repo created by
+This code is partially copied from the bicycle_loc_and_state repo created by
 Anna Marbus during her Master's Thesis. Original code by Anna Marbus.
 Copying and modifications by Christoph Konrad.
 https://repository.tudelft.nl/record/uuid:092f3b70-2d97-436e-b193-139a593e09c7
@@ -23,18 +18,15 @@ https://repository.tudelft.nl/record/uuid:092f3b70-2d97-436e-b193-139a593e09c7
 
 
 import os
-import csv
-import datetime
 import pandas as pd
-import numpy as np
 
 
 def process_can(filepath_log, filepath_dbc):
     """ Decode can log file and convert to dataframe."""
 
-    if filepath_log.endswith('.txt'):
+    if filepath_log.lower().endswith('.txt'):
         return process_can_cl2000(filepath_dbc, filepath_log)
-    elif filepath_log.endswith('.mf4'):
+    elif filepath_log.lower().endswith('.mf4'):
         database = {"LIN": [(filepath_dbc, 0)], "CAN": [(filepath_dbc, 0)]}
         return process_can_edge([filepath_log], database)
     else:
@@ -47,6 +39,8 @@ def process_can_edge(logfiles, databases):
     messages.
     
     ONLY SUPPORTS LOGS CREATED BY THE CAN Edge 2 LOGGER!
+
+    Copied from the bicycle_loc_and_state repo created by Anna Marbus
 
     Parameters
     ----------
@@ -63,7 +57,11 @@ def process_can_edge(logfiles, databases):
         Dataframe of the can decoded can log
     """
     # Concatenate the MDF log files
-    import asammdf
+    try:
+        import asammdf
+    except ModuleNotFoundError as e:
+        e.add_note("Re-install sensorbike with optional dependencies to enable decoding CANEdge2 logs: pip install .[canedge2] or or pip install .[cl2000,canedge2]")
+        raise e
     mdf = asammdf.MDF.concatenate(logfiles)
     
     # Extract bus logging data using the specified databases
@@ -160,9 +158,10 @@ def list_canlogs(directory, verbose=False, nonrecursive=False, ignoreexisiting=F
     ignored = 0
 
     def extracted_exists(can_filepath):
+        nonlocal ignored
         if ignoreexisiting:
-            for ftype in ['.csv', '.parquet']:
-                if os.path.isfile(os.path.splitext(can_filepath)+ftype):
+            for ftype in filetypes_out:
+                if os.path.isfile(os.path.splitext(can_filepath)[0]+ftype):
                     ignored += 1
                     return True
         return False
@@ -176,13 +175,13 @@ def list_canlogs(directory, verbose=False, nonrecursive=False, ignoreexisiting=F
                 relative_path = os.path.relpath(full_path, directory)
                 if not extracted_exists(full_path):
                     logfiles_mf4.append(relative_path)
-            if file.lower().endwidth('.txt'):
+            if file.lower().endswith('.txt'):
                 try:
                     full_path = verify_filepath_txt(os.path.join(root, file))
                 except TypeError:
                     continue
                 relative_path = os.path.relpath(full_path, directory)
-                if not extracted_exists:
+                if not extracted_exists(full_path):
                     logfiles_txt.append(relative_path)
         if nonrecursive:
             break
@@ -194,205 +193,107 @@ def list_canlogs(directory, verbose=False, nonrecursive=False, ignoreexisiting=F
         print(f'Found {len(logfiles_mf4)} CAN Edge 2 logs in {directory}:')
         for i, f in enumerate(logfiles_mf4):
             print(f'    {i:<3}: {f}')
-        print(f'Found {len(logfiles_mf4)} CAN CL2000 logs in {directory}:')
+        print(f'Found {len(logfiles_txt)} CAN CL2000 logs in {directory}:')
         for i, f in enumerate(logfiles_txt):
             print(f'    {i:<3}: {f}')
         if ignoreexisiting and ignored > 0:
-            print(f'Ignored {ignored} logs with existing decoded files.')
+            print(f'Ignored {ignored} logs with existing decoded files of types {filetypes_out}.')
     
     return logfiles_mf4, logfiles_txt
 
 
-def process_can_cl2000(dbc_file, log_file, output_csv_base):
+def process_can_cl2000(dbc_file, log_file):
     """
-    This function processes a CAN log file using a DBC file to decode the messages.
-    It filters message with CAN IDs 66 and 67, 68, and 342. CAN ID 66 and 67 contain gyroscope and
-    acceleration data, respectively. CAN ID 68 contains the Tait-Bryan angles, and CAN ID 342
-    contains steering angle data.
+    This function processes CAN log files using DBC files to decode the 
+    messages.
+    
+    ONLY SUPPORTS LOGS CREATED BY THE CL2000 CAN logger!
 
-    Parameters:
-    dbc_file (str): Path to the DBC file.
-    log_file (str): Path to the log file.
-    output_csv (str): Path to the output CSV file.
+    Parameters
+    ----------
+    
+    dbc_file :
+        Path to the bus definition (.dbc)
+
+    log_file : list 
+        Paths to the TXT log file.
+    
+    Returns
+    -------
+    df_log : pandas.dataframe
+        Dataframe of the can decoded can log
     """
     
     # Load the DBC file
-    import cantools
+    try:
+        import cantools
+    except ModuleNotFoundError as e:
+        e.add_note("Re-install sensorbike with optional dependencies to enable decoding CL2000 logs: pip install .[cl2000] or pip install .[cl2000,canedge2]")
+        raise 
+    
     db = cantools.database.load_file(dbc_file)
 
-    # Read and decode the log file
+    # converters for reading the txt log
+    def hex2int(x):
+        try:
+            return int(x, 16)
+        except ValueError:
+            return None
+
+    def hex2bytes(x):
+        try:
+            return bytes.fromhex(x)
+        except ValueError:
+            return None
+
+    df_log = pd.read_csv(log_file, sep=';', comment='#', 
+                     parse_dates=['Timestamp'], date_format=r'%Y/%m/%d:%H:%M:%S:%f',
+                     converters={
+                        'ID': hex2int,
+                        'Data': hex2bytes
+                     })
+    
+    # drop messages not corresponding to the kinematics
+    kinematic_ids = [66, 67, 68, 71, 342]
+    df_log = df_log[df_log['ID'].isin(kinematic_ids)]
+    
+    # decode messages
     decoded_messages = []
-    with open(log_file, 'r') as file:
-        reader = csv.reader(file, delimiter=';')
-        header_skipped = False
-        for row in reader:
-            # Skip header rows starting with '#'
-            if row[0].startswith('#'):
-                continue
+    for id_, data in zip(df_log['ID'], df_log['Data']):
+        try:
+            decoded_messages.append(db.decode_message(id_, data))
+        except Exception:
+            decoded_messages.append(None)
+    df_log['message'] = decoded_messages
+    df_log = df_log[df_log['message'].notnull()]
 
-            # Skip the actual header row
-            if not header_skipped:
-                header_skipped = True
-                continue
+    # extract message dicts
+    expanded_df = pd.DataFrame.from_records(df_log['message'].tolist(), index=df_log.index)
+    df_log = pd.concat([df_log['Timestamp'], expanded_df], axis=1)
+    df_log = df_log.groupby('Timestamp').first().reset_index()
 
-            # Parse the row
-            timestamp_str, msg_type, can_id, length, data = row
-            timestamp = datetime.strptime(timestamp_str, '%Y/%m/%d:%H:%M:%S:%f')
-            can_id = int(can_id, 16)
-            data_bytes = bytes.fromhex(data)
+    return df_log
 
-            # Decode the CAN message using the DBC file
-            try:
-                message = db.decode_message(can_id, data_bytes)
-                decoded_messages.append((timestamp, can_id, message))
-            except Exception as e:
-                continue
 
-    # Dictionaries to store merged messages for different CAN IDs
-    merged_messages_66_67 = {} # contains IMU data
-    merged_messages_68 = {} # contains Euler angle data
-    merged_messages_342 = {} # contains steering angle data
-
-    # Filter and merge messages based on CAN ID
-    for timestamp, can_id, message in decoded_messages:
-        if can_id in (66, 67):
-            if timestamp not in merged_messages_66_67:
-                merged_messages_66_67[timestamp] = {}
-            merged_messages_66_67[timestamp].update(message)
-        elif can_id == 68:
-            if timestamp not in merged_messages_68:
-                merged_messages_68[timestamp] = {}
-            merged_messages_68[timestamp].update(message)
-        elif can_id == 342:
-            if timestamp not in merged_messages_342:
-                merged_messages_342[timestamp] = {}
-            merged_messages_342[timestamp].update(message)
-
-    def write_to_csv(merged_messages, output_csv):
-        # Get all unique keys from the merged messages for the CSV header
-        all_keys = set()
-        for message in merged_messages.values():
-            all_keys.update(message.keys())
-
-        # Write the merged messages to a CSV file with expanded columns
-        with open(output_csv, 'w', newline='') as csvfile:
-            fieldnames = ['Timestamp'] + sorted(all_keys)
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-            writer.writeheader()
-            for timestamp, message in merged_messages.items():
-                # Format timestamp to HHMMSS.fff
-                formatted_timestamp = timestamp.strftime('%H%M%S.%f')[:-3]
-                row = {'Timestamp': formatted_timestamp}
-                row.update(message)
-                writer.writerow(row)
-
-    # Write each set of merged messages to its respective CSV file
-    write_to_csv(merged_messages_66_67, f'{output_csv_base}_66_67.csv')
-    write_to_csv(merged_messages_68, f'{output_csv_base}_68.csv')
-    write_to_csv(merged_messages_342, f'{output_csv_base}_342.csv')
-
-    # Load and display the CSV files for verification (optional)
-    df_can_66_67 = pd.read_csv(f'{output_csv_base}_66_67.csv')
-    df_can_68 = pd.read_csv(f'{output_csv_base}_68.csv')
-    df_can_342 = pd.read_csv(f'{output_csv_base}_342.csv')
-
-    return df_can_66_67, df_can_68, df_can_342
-
-# Function usage:
-
-# df_can_66_67, df_can_68, df_can_342 = process_can_log('Fused.dbc', 'probeer.TXT', 'decoded') # Replace with your files
-
-# The `interpolate_data` function interpolates the data from the two different channels
-# over a specified range of timestamps using a given a time step of 0.001 s.
-def interpolate_data(df68, df342, step):
+def rename_canlog_columns(df):
+    """ Rename the can-log columns to more descriptive names incl. units.
     """
-    Interpolates data for given dataframes over a specified timestamp range with a given step.
-    
-    Parameters:
-    df68 (pd.DataFrame): Dataframe containing Euler angles data.
-    df342 (pd.DataFrame): Dataframe containing steering angle data.
-    step (float): The step size for the new timestamp range which is smaller than the 
-    original one (1000 Hz rather than 100 Hz)
-    
-    Returns:
-    tuple: Two interpolated dataframes for the two data channels.
-    """
-    # Define the new timestamp range with the specified step for channel 68 (Euler angles)
-    new_timestamps = np.arange(df68['Timestamp'][0], df68['Timestamp'].iloc[-1], step)
-    
-    # Define the new timestamp range with the specified step for channel 342 (steering angle)
-    new_timestamps2 = np.arange(df342['Timestamp'][0], df342['Timestamp'].iloc[-1], step)
+    MEASUREMENTS_TO_EXTRACT = {
+        'gyro_z': 'gyro_z_rad/s',
+        'gyro_y': 'gyro_y_rad/s',
+        'gyro_x': 'gyro_x_rad/s',
+        'accel_z': 'accel_z_m/s2', 
+        'accel_y': 'accel_y_m/s2',
+        'accel_x': 'accel_x_m/s2',
+        'yaw': 'yaw_rad',
+        'pitch': 'pitch_rad',
+        'roll': 'roll_rad',
+        'ws_rear': 'wheelspeed_rear_rev/s',
+        'LWS_ANGLE': 'steer_deg',
+        'LWS_SPEED': 'steer_rate_deg/s',
+    }
 
-    # Interpolate the data from channel 68 
-    df_can_68_int = pd.DataFrame({
-        "Timestamp": new_timestamps,
-        "pitch": np.interp(new_timestamps, df68["Timestamp"], df68["pitch"]),
-        "roll": np.interp(new_timestamps, df68["Timestamp"], df68["roll"]),
-        "yaw": np.interp(new_timestamps, df68["Timestamp"], df68["yaw"])
-    })
-    
-    # Interpolate the data from channel 342 
-    df_can_342_int = pd.DataFrame({
-        "Timestamp": new_timestamps2,
-        "LWS_ANGLE": np.interp(new_timestamps2, df342["Timestamp"], df342["LWS_ANGLE"]),
-    })
-    
-    return df_can_68_int, df_can_342_int
-
-# Function usage:
-
-# df_interpolated_68, df_interpolated_342 = interpolate_data(df_can_68,df_can_342, 0.001) # You can change the step
-
-# `find_closest function` is designed to find and return the row in a dataframe that has the 
-# timestamp closest to the timestamp from the IMU data. This is useful as we
-# want to align them as closely as possible based on time.
-def find_closest(df, value, columns):
-    """
-    Find the closest row in a dataframe based on a given timestamp value 
-    and return the row with the closest timestamp containing the specified columns.
-    """
-    closest_index = (df['Timestamp'] - value).abs().idxmin()
-    return df.loc[closest_index, columns]
-
-# `match_and_merge` function is designed to match and merge dataframes based on closest 
-# timestamps from channel 66 and 67 (IMU data) with a fixed step of 0.01 s.
-def match_and_merge(df_can67, df_can68, df_lws):
-    """
-    Match and merge data from three dataframes based on the closest timestamp.
-    
-    Parameters:
-    df_can67: Dataframe containing IMU sensor.
-    df_can68: Dataframe containing pitch, roll, and yaw data.
-    df_lws: Dataframe containing steering angle data.
-    
-    Returns:
-    pd.DataFrame: A merged dataframe with matched data from all three input dataframes.
-    """
-    matched_data = []
-    for _, row in df_can67.iterrows():
-        closest_angles = find_closest(df_can68, row['Timestamp'], ['pitch', 'roll', 'yaw'])
-        closest_lws_angle = find_closest(df_lws, row['Timestamp'], ['LWS_ANGLE'])
-        matched_data.append({
-            "Timestamp": row['Timestamp'],
-            "accel_x": row['accel_x'],
-            "accel_y": row['accel_y'],
-            "accel_z": row['accel_z'],
-            "gyro_x": row['gyro_x'],
-            "gyro_y": row['gyro_y'],
-            "gyro_z": row['gyro_z'],
-            "pitch": closest_angles['pitch'],
-            "roll": closest_angles['roll'],
-            "yaw": closest_angles['yaw'],
-            "LWS_ANGLE": closest_lws_angle['LWS_ANGLE']
-        })
-    df_matched = pd.DataFrame(matched_data)
-    return df_matched
-
-# Function usage:
-
-# df_matched = match_and_merge(df_can_66_67, df_interpolated_68, df_interpolated_342)
-
-
-
+    df = df[list(MEASUREMENTS_TO_EXTRACT.keys())]
+    df = df.rename(MEASUREMENTS_TO_EXTRACT)
+    return df
 
