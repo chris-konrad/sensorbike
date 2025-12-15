@@ -19,11 +19,11 @@ def parse_args():
 
     parser = argparse.ArgumentParser(prog='can2csv',
                                      description='Decode one or multiple CAN logs and export the kinematic measurements to .csv')
-    parser.add_argument('-d', '--dbc', type=str, help='File path to the CAN bus definition file (.dbc file)')
+    parser.add_argument('-d', '--dbc', type=str, help='File path to the CAN bus definition file (.dbc file)', required= True)
     parser.add_argument('-l', '--logs', type=str, help=('File path of a single CAN log file or a '
                                                         'directory which contains log files. If a directory is'
-                                                        ' supplied. The directory and all subdirectories will '
-                                                        'be searched for .mf4 (CANEdge2) and .txt (CL2000) files.'))
+                                                        ' supplied, the directory and all subdirectories will '
+                                                        'be searched for .mf4 (CANEdge2) and .txt (CL2000) log files.'), required=True)
     parser.add_argument('-a', '--append', action='store_true', help=('If True, multiple can log files will be '
                                                         'appended to the same .csv. in alphabetical order. Only '
                                                         'select if files are consecutive! Otherwise, an individual '
@@ -33,7 +33,7 @@ def parse_args():
                         'a specific file is given instead of a directory.'))
     parser.add_argument('-o', '--outdir', type=str, default='input directory', help='The output directory')
     parser.add_argument('-f', '--format', choices=['.csv', '.parquet'], default = '.csv',
-                        help=('Output format. Choose ".csv" for human-readible files and ".parquet" for'
+                        help=('Output format. Choose ".csv" for human-readible files or ".parquet" for'
                               'memory efficiency.'))
     parser.add_argument('-m', '--mute', action='store_true', help='Mutes verbosity.')
     
