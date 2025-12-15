@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument('-nr', '--nonrecursive', active='store_true', help=('Perform non-recursive search exclusively in '
                         'the specified directory instead of recursive search through all subdirectories. Has no effect if '
                         'a specific file is given instead of a directory.'))
+    parser.add_argument('-i', '--ignoreexisting', action='store_true', help='Ignore logs for which a decoded file already exists.')
     parser.add_argument('-o', '--outdir', type=str, default='input directory', help='The output directory')
     parser.add_argument('-f', '--format', choices=['.csv', '.parquet'], default = '.csv',
                         help=('Output format. Choose ".csv" for human-readible files or ".parquet" for'
@@ -49,7 +50,9 @@ def main():
 
     filepaths_logs = []
     if os.path.isdir(args.logs):
-        filepaths_mf4logs_rel, filepath_txtlogs_rel = can.list_canlogs(args.logs, verbose=not args.mute)
+        filepaths_mf4logs_rel, filepath_txtlogs_rel = can.list_canlogs(args.logs, verbose=~args.mute, 
+                                                                       ignoreexisiting=args.ignoreexisting, 
+                                                                       filetypes_out=[args.format])
         filepaths_logs_rel = filepaths_mf4logs_rel+filepath_txtlogs_rel
         filepaths_logs = [os.path.join(args.logs, f) for f in filepaths_logs_rel]
         if len(filepaths_logs)==0:
