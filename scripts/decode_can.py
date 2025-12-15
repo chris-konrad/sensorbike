@@ -28,7 +28,7 @@ def parse_args():
                                                         'appended to the same .csv. in alphabetical order. Only '
                                                         'select if files are consecutive! Otherwise, an individual '
                                                         '.csv file will be created for each log file.'))
-    parser.add_argument('-nr', '--nonrecursive', active='store_true', help=('Perform non-recursive search exclusively in '
+    parser.add_argument('-nr', '--nonrecursive', action='store_true', help=('Perform non-recursive search exclusively in '
                         'the specified directory instead of recursive search through all subdirectories. Has no effect if '
                         'a specific file is given instead of a directory.'))
     parser.add_argument('-i', '--ignoreexisting', action='store_true', help='Ignore logs for which a decoded file already exists.')
@@ -41,6 +41,28 @@ def parse_args():
     return parser.parse_args()
     
 
+def write(dir_out, df, fname_out, format, verbose):
+
+    # filepath for writing
+    if not os.path.isdir(dir_out):
+        os.makedirs(dir_out)
+        if verbose:
+            print(f'   Created missing output directory {dir_out}')
+    
+    if not fname_out.endswith(format):
+        fname_out += format
+
+    filepath_out = os.path.join(dir_out, fname_out)
+    if verbose:
+        print(f'   ---> {filepath_out}')
+
+    # save
+    if format == '.csv':
+        df.to_csv(filepath_out, sep=';')
+    else:
+        df.to_parquet(filepath_out, engine="pyarrow", compression="snappy")
+
+
 def main():
 
     args = parse_args()
@@ -50,7 +72,8 @@ def main():
 
     filepaths_logs = []
     if os.path.isdir(args.logs):
-        filepaths_mf4logs_rel, filepath_txtlogs_rel = can.list_canlogs(args.logs, verbose=~args.mute, 
+        filepaths_mf4logs_rel, filepath_txtlogs_rel = can.list_canlogs(args.logs, verbose=not args.mute, 
+                                                                       nonrecursive=args.nonrecursive,
                                                                        ignoreexisiting=args.ignoreexisting, 
                                                                        filetypes_out=[args.format])
         filepaths_logs_rel = filepaths_mf4logs_rel+filepath_txtlogs_rel
@@ -75,93 +98,66 @@ def main():
 
     # output names
     filenames_out = []
-    for f in filepaths_logs:
-        if args.outdir == 'input directory' and not args.append:
-            filename_out = os.path.splitext(os.path.basename(filepaths_logs[0]))[0]
+    if args.outdir == 'input directory' and not args.append:
+        for f in filepaths_logs:
+            filename_out = os.path.splitext(os.path.basename(f))[0]
             filename_out += args.format
-        else:            
-            n0 = os.path.normpath(os.path.splitext(filepaths_logs_rel[0])[0])
+            filenames_out.append(filename_out)
+    else:
+        for f in filepaths_logs_rel:
+            n0 = os.path.normpath(os.path.splitext(f)[0])
             n0 = n0.replace(os.sep, '-')
             n0 = n0 + args.format
             filename_out = n0
-        filenames_out.append(filename_out)
+            filenames_out.append(filename_out)
 
     # decode can files
     df_list = []
     if not args.mute:
-        print("Decoding ...")
-    for f in filepaths_logs:
+        if args.append:
+            print("Decoding ...")
+        else:
+            print("Decoding and writing ...")
+
+    for dir_out, f, fname_out in zip(dirs_out, filepaths_logs, filenames_out):
             print(f"   {f}")
             df_i = can.process_can(f, filepath_dbc)
-            df_list.append(df_i)
+
+            if args.append:
+                df_list.append(df_i)
+            else:
+                df_i = can.rename_canlog_columns(df_i)
+                write(dir_out, df_i, fname_out, args.format, not args.mute)
 
     # append
     if args.append:
+        if not args.mute:
+            print("   Appending logs ... ")
+
         # Warn
         if len(df_list) > 1 and not args.mute:
             print((f"WARNING: Concatenating multiple log files in alphabetical order."
                 f" This only makes sense if the log files contain directly consecutive"
                 f" logs without breaks! Consider converting individual files if unsure."))
 
-        df_list = [pd.concat(df_list, ignore_index=True)]
+        df_app = pd.concat(df_list, ignore_index=True)
+        if not args.mute:
+            print("   done!")
+
+
+        if not args.mute:
+            print("Write ...")
+
         # out directory
         if args.outdir == 'input directory':
-            dirs_out = [args.logs]
+            dir_out = args.logs
         else: 
-            dirs_out = [dirs_out[0]]
-        # out filename
-        filenames_out = [f"{filenames_out[0][:-4]}_{filenames_out[1][:-4]}"]
+            dir_out = dirs_out[0]
 
-    if not args.mute:
-        print("   done!")
+        write(dir_out, df_app, f"{os.path.splitext(filenames_out[0])[0]}-{os.path.splitext(filenames_out[-1])[0]}")
 
-    # choose measurements and rename
-    MEASUREMENTS_TO_EXTRACT = {
-        'gyro_z': 'gyro_z_rad/s',
-        'gyro_y': 'gyro_y_rad/s',
-        'gyro_x': 'gyro_x_rad/s',
-        'accel_z': 'accel_z_m/s2', 
-        'accel_y': 'accel_y_m/s2',
-        'accel_x': 'accel_x_m/s2',
-        'yaw': 'yaw_rad',
-        'pitch': 'pitch_rad',
-        'roll': 'roll_rad',
-        'ws_rear': 'wheelspeed_rear_rev/s',
-        'LWS_ANGLE': 'steer_deg',
-        'LWS_SPEED': 'steer_rate_deg/s',
-    }
-
-    if not args.mute:
-        print("Extract kinematics and write ...")
-
-    for df, dir_out, fname_out in zip(df_list, dirs_out, filenames_out):
-        
-        # filepath for writing
-        if not os.path.isdir(dir_out):
-            os.makedirs(dir_out)
-            if not args.mute:
-                print(f'   Created missing output directory {dir_out}')
-        
-        if not filename_out.endswith(args.format):
-            filename_out += args.format
-
-        filepath_out = os.path.join(dir_out, fname_out)
         if not args.mute:
-            print(f'   {filepath_out}')
-
-
-        #extract kineamtics
-        df = df[list(MEASUREMENTS_TO_EXTRACT.keys())]
-        df = df.rename(MEASUREMENTS_TO_EXTRACT)
-
-        # save
-        if args.format == '.csv':
-            df.to_csv(filepath_out, sep=';')
-        else:
-            df.to_parquet(filepath_out, engine="pyarrow", compression="snappy")
-        
-    if not args.mute:
-        print("   done!")
+            print("   done!")
 
 
 if __name__ == "__main__":
