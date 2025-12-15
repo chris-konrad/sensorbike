@@ -13,20 +13,24 @@ import os
 import argparse
 import sensorbike.canbus as can
 import pandas as pd
+import warnings
 
 def parse_args():
 
     parser = argparse.ArgumentParser(prog='can2csv',
-                                     description='Decode one or multiple .mf4 CAN logs and export the kinematic measurements to .csv')
+                                     description='Decode one or multiple CAN logs and export the kinematic measurements to .csv')
     parser.add_argument('-d', '--dbc', type=str, help='File path to the CAN bus definition file (.dbc file)')
-    parser.add_argument('-l', '--logs', type=str, help=('File path of a single .mf4 CAN log file or a '
+    parser.add_argument('-l', '--logs', type=str, help=('File path of a single CAN log file or a '
                                                         'directory which contains log files. If a directory is'
                                                         ' supplied. The directory and all subdirectories will '
-                                                        'be searched for .mf4 files. '))
-    parser.add_argument('-a', '--append', action='store_true', help='If True, multiple .mf4 files will be '
+                                                        'be searched for .mf4 (CANEdge2) and .txt (CL2000) files.'))
+    parser.add_argument('-a', '--append', action='store_true', help=('If True, multiple can log files will be '
                                                         'appended to the same .csv. in alphabetical order. Only '
                                                         'select if files are consecutive! Otherwise, an individual '
-                                                        '.csv file will be created for each .mf4 file.')
+                                                        '.csv file will be created for each log file.'))
+    parser.add_argument('-nr', '--nonrecursive', active='store_true', help=('Perform non-recursive search exclusively in '
+                        'the specified directory instead of recursive search through all subdirectories. Has no effect if '
+                        'a specific file is given instead of a directory.'))
     parser.add_argument('-o', '--outdir', type=str, default='input directory', help='The output directory')
     parser.add_argument('-f', '--format', choices=['.csv', '.parquet'], default = '.csv',
                         help=('Output format. Choose ".csv" for human-readible files and ".parquet" for'
@@ -55,6 +59,10 @@ def main():
         if not args.mute:
             print(f"Found 1 log file:")
             print(f"      1: {filepaths_logs[0]}")
+
+            if args.nonrecursive:
+                warnings.warn((f"Non-recursive option ('-nr'/'--nonrecursive') has no effect because "
+                "--logs/-l points to a single log file instead of a directory."))
 
     # output directories
     if args.outdir == 'input directory':
