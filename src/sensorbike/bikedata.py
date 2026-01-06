@@ -16,6 +16,7 @@ to work as a standalone module from rcid.utils.
 """
 
 # external imports
+import re
 import os
 import warnings
 import yaml
@@ -32,11 +33,11 @@ from pathlib import Path
 
 # own imports
 from trajdatamanager.datamanager import RTKLibGNSSManager, Track, DataManager
+from trajdatamanager.utils import to_finite
 
 # local imports
 from sensorbike.ukf import filter_dynamic, get_default_filter_settings
-from sensorbike.canbus import process_can_edge, decode_parquet, verify_filepath_dbc
-
+from sensorbike.canbus import process_can, decode_parquet, verify_filepath_dbc, list_decoded_canlogs
 
 class InstrumentedBicycleData():
     """
@@ -57,11 +58,10 @@ class InstrumentedBicycleData():
         trial_name,
         gnss_position_params = dict(h_gnss=0.94, l_gnss=0.17),
         filename_can = None,
-        t_s = None,
+        t_s = 0.01,
         subdir_bike_gnss_solution=None,
         subdir_bike_gnss_report=None,
         subdir_bike_can=None,
-        filepath_dbc = None,
         rotation = 67,
         reference_location = [51.999370, 4.370451],
         filter_settings = None,
@@ -109,13 +109,13 @@ class InstrumentedBicycleData():
             The default corresponds to the setup used for the zigzag experiment (without antenna post).
         filename_can : str, optional
             The filname (or sub-path) of a specific (coded or decoded) CAN log file. 
-            Can be a decoded log in .parquet format or coded logs in .MF4 format. If 
-            .MF4, the CAN bus definition (filepath_dbc) must be given as well. 
+            Can be a decoded log in .parquet format or coded logs in .MF4/.txt format. If 
+            .MF4/.txt, the CAN bus definition must be given as well (can_data_settings['dbc_file'] = 'path//to//definition.dbc'). 
             If not specified, all CAN files in subdir_bike_can are loaded and stitched together.
             Example for a single file: '00001024//00000001.MF4'
         t_s : float, optional
-            Desired sample period of the data after loading. If None, the 
-            CAN sample period is used. The default is None.
+            Desired sample period of the data after loading. May be as low as the CAN sample time. Set to None to 
+            automatically infer the CAN sample time. Default is 0.01 s
         subdir_bike_gnss_solution : str, optional
             Subdirectory of the gnss solution. The default is 
             experiment_name//bike-gnss//solution.
@@ -125,8 +125,6 @@ class InstrumentedBicycleData():
         subdir_bike_can : str, optional
             Subdirectory of the can-log. The default is 
             experiment_name//can-logger.
-        filepath_dbc : str, optional
-            Path to the CAN bus definition file (.dbc) to decode the CAN bus log. 
         rotation : float, optional
             Rotation in deg of the local reference frame w.r.t North. 
             The default is 67.
@@ -166,7 +164,6 @@ class InstrumentedBicycleData():
         self.subdir_bike_gnss_solution = subdir_bike_gnss_solution
         self.subdir_bike_gnss_report = subdir_bike_gnss_report
         self.subdir_bike_can = subdir_bike_can
-        self.filepath_dbc = filepath_dbc
         self.filename_can = filename_can
         self.t_s = t_s
         self.name = f"{self.experiment_name}/{self.trial_name}"
@@ -248,25 +245,50 @@ class InstrumentedBicycleData():
             A track object holding the combined data.
 
         """
+
+        def _to_continous_angles(trk):
+            for k in trk.data_feature_keys:
+                for kk in ['psi', 'phi', 'delta']:
+                    pattern = rf"(?<!d){kk}"
+                    if re.findall(pattern, k):
+                        trk[k] = to_continous_angle(trk[k])
+            return trk
+        
+        def _limit_angles(trk):
+            for k in trk.data_feature_keys:
+                for kk in ['psi', 'phi', 'delta']:
+                    pattern = rf"(?<!d){kk}"
+                    if re.findall(pattern, k):
+                        trk[k] = limit_angle(trk[k])
+            return trk
         
         # combine into one track
         t,  t_span = self._find_time_frame(trk_gnss, trk_can) 
-        
+
+        #convert to continous angles
+        trk_can = _to_continous_angles(trk_can)
         trk_can.sample_at_times(np.r_[t, t[-1]+dt.timedelta(seconds=self.t_s)])
-        
+
+        t = trk_can.t
+        t_span = (t[0], t[-1])
+
         trk_can.crop_to_timespan(t_span[0], t_span[1])
         trk_gnss.crop_to_timespan(t_span[0], t_span[1])
+
+        #trk_can = _limit_angles(trk_can)
         
         data_gnss = expand_timebase(trk_gnss.data, trk_gnss.t, t)
         data_can = trk_can.data
         
-        data = np.c_[data_gnss, data_can]
+        n = min(data_gnss.shape[0], data_can.shape[0]) #fix occasional numerical error
+        data = np.c_[data_gnss[:n], data_can[:n]]
+        t = t[:n]
+
         feat = [k + "_gnss" for k in trk_gnss.data_feature_keys] + \
                [k + "_can" for k in trk_can.data_feature_keys]
 
         metadata = {"meta_gnss": trk_gnss.metadata, 
-                    "meta_can": trk_can.metadata}
-        
+                    "meta_can": trk_can.metadata}   
         
         trk = Track(self.name, 0, t, data, 
                     data_feature_keys = feat, 
@@ -274,14 +296,11 @@ class InstrumentedBicycleData():
                     metadata = metadata)
         
         # align yaw
-        trk['psi_can'] = to_continous_angle(trk['psi_can'])
-        trk['psi_gnss'] = to_continous_angle(trk['psi_gnss'])
-        
-        offset = np.nanmean(trk['psi_can']-trk['psi_gnss'])
-        trk['psi_can'] = trk['psi_can'] - offset 
-        
-        trk['psi_can'] = limit_angle(trk['psi_can'])
-        trk['psi_gnss'] = limit_angle(trk['psi_gnss'])
+        #offset = np.nanmedian(trk['psi_can']-trk['psi_gnss'])
+        #trk['psi_can'] = trk['psi_can'] - offset 
+
+        # limit angles
+        #trk = _limit_angles(trk)
         
         return trk
                     
@@ -311,12 +330,12 @@ class InstrumentedBicycleData():
         dt_can = np.median(np.diff(trk_can.t)).total_seconds()
         
         if self.t_s is None:
-            self.t_s = dt_can
+            self.t_s = dt_can * 2
         
         if self.t_s < dt_can:
-            msg = (f"This module only supports datasets where the CAN sample "
+            msg = (f"This module only supports datasets where twice the CAN sample "
                    f"rate exceeds or equals the requested sample rate "
-                   f"2. Instead the median can sample time was {dt_can:.6f} "
+                   f"2. Instead the double median can sample time was {2*dt_can:.6f} "
                    f"s and the requested sample time was {self.t_s:.6f} s.")
             raise ValueError(msg)
             
@@ -325,27 +344,26 @@ class InstrumentedBicycleData():
                    f"sample time t_s = {self.t_s:.6f} s. Instead it was "
                    f"{dt_gnss:.6f} s")
             
-            
-        t_begin = max(trk_gnss.t_begin, trk_can.t_begin)
+        t_begin = max(trk_gnss.get_begin_allfinite()[0], trk_can.get_begin_allfinite()[0])
         i_gnss_begin = np.argwhere(trk_gnss.t >= t_begin).flatten()[0]
         t_begin = trk_gnss.t[i_gnss_begin]
         
-        t_end = min(trk_gnss.t_end, trk_can.t_end)
+        t_end = min(trk_gnss.get_end_allfinite()[0], trk_can.get_end_allfinite()[0])
         i_gnss_end = np.argwhere(trk_gnss.t <= t_end).flatten()[-1]
         t_end = trk_gnss.t[i_gnss_end]
             
-        t = [t_begin]
-        
-        while t[-1] < t_end:
-            t.append(t[-1] + dt.timedelta(seconds=self.t_s))
-            
-        #check that all gnss times are in the timeframe
-        check = np.all([ti in t for ti in trk_gnss.t[i_gnss_begin:i_gnss_end+1]])
+        t = np.array(pd.date_range(start=t_begin, end=t_end, freq=f"{self.t_s:.6f}s").to_pydatetime())
+
+        # check that all gnss times are in the timeframe
+        # hacky but efficient solution
+        t_float = np.arange(t.size).astype(int) * 10**3
+        tgnss64 = trk_gnss.t.astype('datetime64[ns]')
+        t_float_gnss = (tgnss64[i_gnss_begin:i_gnss_end+1] - tgnss64[i_gnss_begin]) / np.timedelta64(int(self.t_s * 10**3), 'us')
+        t_float_gnss = t_float_gnss.astype(int)
+        check = np.all(np.isin(t_float_gnss, t_float))
         if not check:
             msg = ("Error in time frame! Check if GNSS data has time jitter.")
             raise ValueError(msg)
-            
-        t = np.array(t)
             
         return t, (t_begin, t_end, self.t_s)
     
@@ -369,25 +387,26 @@ class InstrumentedBicycleData():
 
         # create datamanager
         dataman = BalanceAssistLogDataManager(
-            dir_can_log, dir_bike_gnss_report, self.filepath_dbc, self.bike_geom, **self.can_data_settings
+            dir_can_log, dir_bike_gnss_report, self.bike_geom, **self.can_data_settings
         )
 
         # load the full track 
-        if os.path.isfile(self.filename_can):
-            can_files = [self.filename_can]
-        else:
+        if self.filename_can is None:
             ftypes = ['.parquet', '.mf4', '.txt']
             for ftype in ftypes:
-                can_files = Path(dir_can_log).glob(f"*{ftype}")
+                can_files = list(Path(dir_can_log).rglob(f"*{ftype}"))
+                can_files = [str(p) for p in can_files]
                 if can_files:
                     break
             if len(can_files) == 0:
                 raise FileNotFoundError(f"Didn't find any CAN logs in {dir_can_log}! Searched for: {ftypes}")
+        elif os.path.isfile(self.filename_can):
+            can_files = [self.filename_can]
+        else:
+            FileNotFoundError(f"Can't find filename_can: {self.filename_can}")
 
         trk_can = dataman.load_track(can_files, self.filenames_bike_gnss)
 
-
-        
         return trk_can
         
 
@@ -711,8 +730,7 @@ class InstrumentedBicycleData():
     
         self.load(t_begin=t_begin, t_end=t_end, 
                   verbose=verbose, plot_data=False)
-        self.apply_filter(overwrite_rerun_filter=True,
-                          measurement_noise_std=measurement_noise_std,
+        self.apply_filter(measurement_noise_std=measurement_noise_std,
                           process_noise_std=process_noise_std,
                           integration_method=integration_method,
                           bicycle_parameter_dict=bicycle_parameter_dict,
@@ -793,8 +811,6 @@ class InstrumentedBicycleData():
         axes_xy.set_xlabel('x [m]')
         axes_xy.set_title(self.name)
         axes_xy.set_aspect('equal')
-
-        plt.show()
         
         return axes_t, axes_xy
     
@@ -809,9 +825,9 @@ class BalanceAssistLogDataManager(DataManager):
 
     def __init__(self, 
                  path_can_log, 
-                 path_gnss_report, 
-                 dbc_file, 
-                 bike_geometry,
+                 path_gnss_report,
+                 bike_geometry, 
+                 dbc_file=None, 
                  steer_angle_bias = 19.5,
                  ins_filename_suffix = "-ins"):
         """
@@ -838,7 +854,10 @@ class BalanceAssistLogDataManager(DataManager):
         """
         
         super().__init__(path_can_log)
-        self.dbc_file = verify_filepath_dbc(dbc_file)
+        if dbc_file is None:
+            self.dbc_file = None
+        else:
+            self.dbc_file = verify_filepath_dbc(dbc_file)
         self.dir_gnss_report = path_gnss_report
         self.bike_geom = bike_geometry
         self.steer_angle_bias = steer_angle_bias
@@ -847,11 +866,13 @@ class BalanceAssistLogDataManager(DataManager):
 
     def _load_can_logs(self, can_files):
         """ Load a list of can_files into a single data frame. """
-        if can_files[0].lower().endswith('.mf4'):
+        if can_files[0].lower().endswith('.mf4') or can_files[0].lower().endswith('.txt'):
+            if self.dbc_file is None:
+                raise ValueError("Encoded CAN logs given but no .dbc CAN database definition supplied!")
             can_files = [os.path.join(self.dir, f) for f in can_files]
-            data = process_can_edge(can_files, {"LIN": [(self.dbc_file, 0)], "CAN": [(self.dbc_file, 0)]})
+            data = process_can(can_files, self.dbc_file)
         elif can_files[0].lower().endswith('.parquet'):
-            data = pd.concat([decode_parquet(f) for f in can_files], ignore_index=True)
+            data = pd.concat([decode_parquet(f) for f in can_files])
         else:
             raise NotImplementedError(f"Loading CAN logs of filetype {can_files[0]} is not supported!")
         
@@ -879,8 +900,7 @@ class BalanceAssistLogDataManager(DataManager):
         # extract CAN data
         df = self._load_can_logs(can_files)
 
-        t_can = np.array(df.index)
-        t_can = np.array([(ti - t_can[0]).total_seconds() for ti in t_can])
+        t_can = np.array((df.index - df.index[0]).total_seconds())
 
         a_can = (
             np.sqrt(
@@ -889,8 +909,10 @@ class BalanceAssistLogDataManager(DataManager):
             - self.G
         )
         a_can = np.array(a_can)
+        t_a_can, a_can, mask = to_finite(t_can, test=a_can, return_mask=True)
         
         # roll and yaw and linear acceleration
+        df = df.interpolate(method='time', limit=5)
         yaw, dyaw, roll, droll, accel = self.bike_geom.transform_imu2bike(
             df["yaw"],
             df["roll"],
@@ -932,39 +954,43 @@ class BalanceAssistLogDataManager(DataManager):
         # identify time offset between local times of CAN and GNSS data
         t_ss = 0.001
         t_gnss_100 = np.arange(0, t_gnss_local[-1], t_ss)
-        t_can_100 = np.arange(0, t_can[-1], t_ss)
+        t_can_100 = np.arange(0, t_a_can[-1], t_ss)
 
-        a_can_interp = np.interp(t_can_100, t_can, a_can)
+        a_can_interp = np.interp(t_can_100, t_a_can, a_can)
         a_gnss_interp = np.interp(t_gnss_100, t_gnss_local, a_gnss)
+        
+        a_gnss_interp_med = np.median(a_gnss_interp)
+        a_can_interp_med = np.median(a_can_interp)
 
-        a_corr = correlate(a_can_interp, a_gnss_interp, mode="full")
+        a_corr = correlate(a_can_interp-a_can_interp_med, a_gnss_interp-a_gnss_interp_med, mode="full")
         n_offset = (np.argmax(a_corr) - len(a_gnss_interp) + 1)
         t_offset = n_offset * t_ss
             #t_offset = -np.argmax(a_corr) * 0.005
         print(f"Time offset: {t_offset} s", end="")
 
         #plot for validation
-        #fig, ax = plt.subplots(1,1)
-        #if n_offset < 0: 
-        #    ax.plot(a_gnss_interp[abs(n_offset):])
-        #    ax.plot(a_can_interp)
-        #else:
-        #    ax.plot(a_gnss_interp)
-        #    ax.plot(a_can_interp[abs(n_offset):])
+        fig, ax = plt.subplots(1,1)
+        if n_offset < 0: 
+            ax.plot(a_gnss_interp[abs(n_offset):]-a_gnss_interp_med, label='gnss')
+            ax.plot(a_can_interp-a_can_interp_med, label='can')
+        else:
+            ax.plot(a_gnss_interp-a_gnss_interp_med, label='gnss')
+            ax.plot(a_can_interp[abs(n_offset):]-a_can_interp_med, label='can')
+        ax.legend()
         
         #identify drift
         if n_offset < 0: 
             get_drift = find_drift(a_gnss_interp[abs(n_offset):], a_can_interp,
-                                   t_ss)
+                                   t_ss, plot=True)
             drift = get_drift(t_can[:,np.newaxis])
         else:
             get_drift = find_drift(a_gnss_interp, a_can_interp[abs(n_offset):], 
-                                   t_ss)
+                                   t_ss, plot=True)
             drift = get_drift(t_can[:,np.newaxis]-t_offset)
             
         # plot for validation
-        # fig2, ax2 = plt.subplots(1,1)
-        # ax2.plot(a_corr)
+        fig2, ax2 = plt.subplots(1,1)
+        ax2.plot(a_corr)
 
         # derive timstamps for CAN data from GNSS time, offset and drift
         t_can_global = t_gnss_global_begin + dt.timedelta(seconds=1) * \
@@ -972,14 +998,14 @@ class BalanceAssistLogDataManager(DataManager):
 
         # plot for validation
         fig3, ax3 = plt.subplots(1, 1)
-        ax3.plot(t_gnss_global, a_gnss, label='GNSS')
-        ax3.plot(t_can_global, a_can, label='can')
+        ax3.plot(t_gnss_global, a_gnss-a_gnss_interp_med, label='GNSS')
+        ax3.plot(t_can_global[mask], a_can-a_can_interp_med, label='can')
         ax3.set_title(("Time synchronization based on total linear"
                        "acceleration"))
 
         metadata = {
             "track_type": "BalanceAssistLogData",
-            "source": os.path.join(self.dir, filename_can),
+            "source":can_files,
             "source_timesync": path_timesync_source,
             "dbc_file": self.dbc_file,
             "time_offset": t_offset,
@@ -987,7 +1013,7 @@ class BalanceAssistLogDataManager(DataManager):
 
         # create a track with the CAN data
         trk = Track(
-            filename_can,
+            'can',
             2,
             t_can_global,
             np.c_[steer, dsteer, roll, droll, yaw, dyaw, speed, accel],
@@ -1115,7 +1141,7 @@ class InstrumentedBikeGeometry:
         
         # Create symbols and reference frames
         E, B, C = sm.symbols('E B C ', cls=me.ReferenceFrame)
-        psi, phi = me.dynamicsymbols('\psi \phi')
+        psi, phi = me.dynamicsymbols(r'\psi \phi')
         
         h_gnss, l_gnss = sm.symbols('h_gnss, l_gnss')
         gyro_z, gyro_x = sm.symbols('gyro_z gyro_x')
@@ -1283,7 +1309,7 @@ def limit_angle(angle):
         angle_fin[idx:] += sign * 2 * np.pi
         
         i+=1
-        if i > 1000:
+        if i > 100000:
             raise RuntimeError('Endless loop!?')
     
     angle_out = np.nan * np.ones_like(angle)
@@ -1406,15 +1432,9 @@ def expand_timebase(data, time_data, time_target):
         Data series expanded with NaN.
 
     """
-
-    time = np.array(time_target)
-
-    data_new = np.nan * np.ones((len(time), data.shape[1]))
-
-    for i in range(len(time_data)):
-        data_new[np.argwhere(time == time_data[i]), :] = data[i, :]
-        
-        assert np.argwhere(time == time_data[i]).size > 0
+    positions = np.searchsorted(time_target, time_data)
+    data_new = np.full((len(time_target), data.shape[1]), np.nan)
+    data_new[positions, :] = data
 
     return data_new 
 
@@ -1454,7 +1474,7 @@ def find_drift(x1, x2, t_s, plot=False):
         x1i = x1[i*n:(i+1)*n]
         x2i = x2[i*n:(i+1)*n]
         
-        corr = correlate(x1i, x2i, mode="full")
+        corr = correlate(x1i-np.median(x1i), x2i-np.median(x2i), mode="full")
         
         drift_offset_times.append(t_s*(i*n+((i+1)*n - i*n)/2))
         drift_offsets.append(np.argmax(corr) - len(x2i) + 1)
