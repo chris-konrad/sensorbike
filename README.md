@@ -128,3 +128,5 @@ It supports:
 ## License
 
 This package is licensed under the terms of the [MIT license](https://github.com/chrismo-konrad/sensorbike/blob/main/LICENSE).
+
+The bicycle parameters in `/src/sensorbike/params` are derived from data provided by Jason Moore in [moorepants/BicycleParameters](https://github.com/moorepants/BicycleParameters), licensed under the [BSD-2-clause](https://github.com/chris-konrad/sensorbike/blob/main/src/rcid/params/LICENSE.txt) license.
