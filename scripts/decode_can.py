@@ -4,7 +4,7 @@ Can process individual files or search directories for mf4 files.
 
 Usage:
 
-python decode_can.py [-h] [-d DBC_FILEPATH] [-l LOG_DIRECTORY_OR_FILEPATH] [-o OUTDIR] [-f FORMAT] [-m]
+python decode_can.py [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m]
 
 @author: Christoph M. Konrad
 """
@@ -17,7 +17,7 @@ import warnings
 
 def parse_args():
 
-    parser = argparse.ArgumentParser(prog='can2csv',
+    parser = argparse.ArgumentParser(prog='decode_can.py',
                                      description='Decode one or multiple CAN logs and export the kinematic measurements to .csv')
     parser.add_argument('-d', '--dbc', type=str, help='File path to the CAN bus definition file (.dbc file)', required= True)
     parser.add_argument('-l', '--logs', type=str, help=('File path of a single CAN log file or a '

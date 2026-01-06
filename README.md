@@ -41,7 +41,7 @@ Install the package and it's dependencies. Refer to `pyproject.toml` for an over
 
 ### Bicycle Sensors
 
-Their onboard unit already comes with:
+Their onboard unit publishes measurements from the following sensors on the bikes CAN bus:
 
 - [VR IMU BN0086MEMs rate gyroscope](https://www.sparkfun.com/sparkfun-vr-imu-breakout-bno086-qwiic.html) mounted in the control box on the rack of the bikes:
   - Roll, Pitch, Yaw
@@ -53,16 +53,15 @@ Their onboard unit already comes with:
 - High Res BOSCH ABS speed sensor
   - wheelspeed
 
+Both CAN loggers in the lab inventory are supported the CSS Electronics [CANedge2](https://www.csselectronics.com/products/can-bus-data-logger-wifi-canedge2) and [CL2000](https://www.csselectronics.com/products/can-bus-logger-interface-cl2000).
+
 Additionally, a [SWIFTNAV Piksi Multi RTK GNSS]([Swift Navigation Support](https://support.swiftnav.com/support/solutions/articles/44001850752-piksi-multi-getting-started-guide)) can be mounted on the rack of the bikes. In conjunction with correction data from the fixed receiver of the [Dutch Permanent GNSS Array (DPGA)]([Dutch Permanent GNSS Array (DPGA)](https://gnss1.tudelft.nl/dpga/)) mounted on the EWI-tower, this adds high-precision localization to the bicycles. 
+
+
 
 ### Data Aquisition and Archiving
 
-This toolbox assumes that you have captured data with the GNSS mounted on the rack of the bicycle and have logged the CAN bus of the bicycle. 
-
-> [!warning]
-> Currently, only logs captured with the CAN EDGE 2 are supported. The logs of the CAN2000 differ in format and can't be decoded with this toolbox.
-
-Store the raw, encoded data (i.e. the `.M4F` files from the CAN logger and the `.sbp` files from the GNSS) in a file system with the following structure:
+This toolbox assumes that you have captured data with the SwiftNav Piksi Multi GNSS mounted on the rack of the bicycle and have logged the CAN bus of the bicycle.  Store the raw, encoded data (i.e. the `.M4F`/`.txt` files from the CAN logger and the `.sbp` files from the GNSS) in a file system with the following structure:
 
 ```
 .
@@ -100,22 +99,26 @@ You can either run the full pipeline or individual steps.
 The most basic usage is demonstrated by `example_full-pipeline.py` in the example toolbox. This includes a example `yaml` file for coniguration. More instructions and examples will follow ...
 
 ### Decoding CAN-files only
-You can decode and import CAN logs into a python environment without using the full data processing pipeline.
-For this, you need the filepath to the CAN file
+You can decode and import CAN logs into a python environment without using the full data processing pipeline. For this, you need the filepath to the CAN file and the `.dbc` database definition. `sensorbike.canbus.process_can()` automatically detects if the logs are created from the CAN Edge 2 logger (`.mf4`) or the CL2000 logger (`.txt`), extracts can messages and stores the IMU, wheelspeed, and steer encoder measurements in a pandas dataframe. 
 
 ```python
 import sensorbike.canbus as can
-df = can.process_can_edge(
-    [FILEPATH_TO_CAN_LOG_FILE],
-    {"LIN": [(FILEPATH_TO_DBC_FILE, 0)], "CAN": [(FILEPATH_TO_DBC_FILE, 0)]},
+df = can.process_can(
+    [FILEPATH_TO_CAN_LOG1, ..., FILEPATH_TO_CAN_LOGN,],
+    FILEPATH_TO_DBC
 )
 ```
 
 Additionally, this package includes the script `scripts/decode_can.py` that decodes CAN log files and exports them to csv or parquet. 
 Use it as below and call `--help` for more info on the arguments. 
 ```
-> python decode_can.py [-h] [-d DBC_FILEPATH] [-l LOG_DIRECTORY_OR_FILEPATH] [-o OUTDIR] [-f FORMAT] [-m]
+> python decode_can.py decode_can.py [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m]
 ```
+It supports:
+- automatically decoding from CAN Edge 2 and CL 2000
+- recursive and non-recursive search for log files (`--nonrecursive`)
+- ignoring files for which a decoded output alread exists (`--ignoreexisting`)
+- export to `.parquet` for efficient data storage in a binary format and `.csv` for human-readble text files. 
 
 ## Authors
 
