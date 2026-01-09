@@ -68,6 +68,7 @@ class InstrumentedBicycleData():
         gnss_data_settings = {},
         can_data_settings = {},
         transfrom_to_rwcontactpoint = True,
+        reference_frame = 'E', 
     ):
         """
         Create a InstrumentedBicycleData object.
@@ -139,6 +140,13 @@ class InstrumentedBicycleData():
         transfrom_to_rwcontactpoint : bool, optional
             Transform GNSS locations to the rear-wheel contact point of the 
             bicycle. The default is True.
+        reference_frame : str, optional
+            The frame to represent the data in. Choose from 'E' and 'N'. The 
+            N-frame is the frame with x and y directions fixed to the ground and z pointing
+            into the ground (as common in bicycle dynamic research and used for the Carvallo-Whipple model). 
+            The E-frame is the frame with x and y directions fixed to the ground 
+            and z pointing upwards (as common in traffic engineering and used for 
+            cyclistsocialforces). The default is 'E'. 
         """
 
         # set up paths and directories
@@ -169,6 +177,12 @@ class InstrumentedBicycleData():
         self.name = f"{self.experiment_name}/{self.trial_name}"
         self.transfrom_to_rwcontactpoint = transfrom_to_rwcontactpoint
         self.is_filtered = False
+        
+        # reference frame
+        if reference_frame not in ['E', 'N']:
+            raise ValueError(f"The reference frame must be 'E' or 'N', instead it was '{reference_frame}'.")
+        self.desired_reference_frame = reference_frame
+        self.current_reference_frame = 'E'
 
         # rotation and reference location
         self.rotation = rotation
@@ -221,6 +235,8 @@ class InstrumentedBicycleData():
         trk['y_gnss'] = y
         
         trk = update_yaw(trk, keys=('x_gnss', 'y_gnss', 'psi_gnss'))
+
+        self.current_reference_frame = 'E'
         
         return trk
     
@@ -520,12 +536,15 @@ class InstrumentedBicycleData():
                 print(("Transforming gnss data to rear-wheel "
                        "contact point ..."), end="")
             trk = self._transform_gnss_to_rearwheel(trk)
+            # desired reference frame
+            trk = self._transform_to_desired_referenceframe(trk)
             if verbose:
                 print("done!")
                        
         self.trk = trk
         self.data_loaded = True
 
+        #plotting
         if plot_data:
             if verbose:
                 print("Plotting data ...", end="")
@@ -534,6 +553,21 @@ class InstrumentedBicycleData():
                 print("done!")
 
         return self.trk
+    
+
+    def _transform_to_desired_referenceframe(self, trk):
+
+        if self.current_reference_frame == 'E' and self.desired_reference_frame == 'N':
+            trk = self.bike_geom.transform_E2N(trk)
+            self.current_reference_frame = 'N'
+            trk.metadata['reference_frame'] = 'N'
+        elif self.current_reference_frame == 'N' and self.desired_reference_frame == 'E':
+            trk = self.bike_geom.transform_N2E(trk)
+            self.current_reference_frame = 'E'
+            trk.metadata['reference_frame'] = 'E'
+        
+        return trk
+
     
     def apply_filter(self, measurement_noise_std=None, 
                            process_noise_std=None,
@@ -619,7 +653,9 @@ class InstrumentedBicycleData():
         data_dict = self.trk.to_dict(relative_time=self.trk.t_begin, 
                                      features=keys_track)
         data_dict = {k.split("_")[0]: v for k, v in data_dict.items()}
-        data_dict = self.bike_geom.transform_E2N(data_dict)
+
+        if self.current_reference_frame == 'E':
+            data_dict = self.bike_geom.transform_E2N(data_dict)
         
         data_dict["psi"] = to_continous_angle(data_dict["psi"])
         
@@ -642,7 +678,8 @@ class InstrumentedBicycleData():
         for i, k in enumerate(keys_out):
             data_dict_filt[k] = data_filtered[:,i]
  
-        data_dict_filt = self.bike_geom.transform_N2E(data_dict_filt)
+        if self.desired_reference_frame == 'E':
+            data_dict_filt = self.bike_geom.transform_N2E(data_dict_filt)
         data_dict_filt["psi"] = limit_angle(data_dict_filt["psi"])
         
         
@@ -1215,12 +1252,25 @@ class InstrumentedBikeGeometry:
         """
         Transform a data dictionary from the N to the E frame.
         """
+
+        keys_to_mirror = ['y', 'psi', 'dpsi', 'delta', 'ddelta']
         
-        data_dict['y'] = - data_dict['y']
-        data_dict['psi'] = - data_dict['psi']
-        data_dict['dpsi'] = - data_dict['dpsi']
-        data_dict['delta'] = - data_dict['delta']
-        data_dict['ddelta'] = - data_dict['ddelta']
+        if isinstance(data_dict, dict):
+            keys = list(data_dict.keys())
+        elif isinstance(data_dict, Track):
+            keys = data_dict.data_feature_keys
+        else:
+            raise ValueError(f"data_dict must be 'dict' or 'Track'. Instead it was '{type(data_dict)}'.")
+        
+        for k in keys_to_mirror:
+            pattern = r"^"+k+r"(?:_|$).*"
+            found_k = False
+            for kk in keys:
+                if re.findall(pattern, kk):
+                    data_dict[kk] = - data_dict[kk]
+                    found_k = True
+            if not found_k:
+                raise KeyError(f"Couldn't find data feature corresponding to key '{k}' in data_dict with keys {keys}.")
         
         return data_dict
     
@@ -1301,10 +1351,13 @@ def limit_angle(angle):
     while np.any(np.abs(angle_fin) > np.pi):
         idx = min(np.argwhere(np.abs(angle_fin) > np.pi).flatten())
         
-        if angle_fin[idx]-angle_fin[idx-1] > 0:
-            sign = -1
+        if idx == 0:
+            sign = -1 * np.sign(angle_fin[idx])
         else:
-            sign = 1
+            if np.gradient(angle_fin)[idx] > 0:
+                sign = -1
+            else:
+                sign = 1
         
         angle_fin[idx:] += sign * 2 * np.pi
         
