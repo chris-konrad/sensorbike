@@ -56,7 +56,7 @@ class InstrumentedBicycleData():
         dir_base,
         experiment_name,
         trial_name,
-        gnss_position_params = dict(h_gnss=0.94, l_gnss=0.17),
+        gnss_position_params = dict(h_gnss=1.08, l_gnss=0.16),
         filename_can = None,
         t_s = 0.01,
         subdir_bike_gnss_solution=None,
@@ -105,9 +105,10 @@ class InstrumentedBicycleData():
             An arbitrary name for this trial.
         gnss_position_params : dict, optional
             A dictionary describing the position of the GNSS antenna:
-                hb : height [m] of the GNSS antenna above ground when the bicycle is upright. Default is 0.94 m
-                lb : horizontal distance [m] between GNSS antenna and the rear wheel contact patch. Default is 0.17 m
-            The default corresponds to the setup used for the zigzag experiment (without antenna post).
+                hb : height [m] of the GNSS antenna above ground when the bicycle is upright. Default is 1.08 m
+                lb : horizontal distance [m] between GNSS antenna and the rear wheel contact patch. Default is 0.16 m
+            The default corresponds to the setup used for the interaction experiment (with antenna post). The parameters
+            for the zigzag experiment (without antenna post) are (0.94, 0.17).
         filename_can : str, optional
             The filname (or sub-path) of a specific (coded or decoded) CAN log file. 
             Can be a decoded log in .parquet format or coded logs in .MF4/.txt format. If 
