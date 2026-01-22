@@ -32,7 +32,8 @@ from sklearn.linear_model import RANSACRegressor
 from pathlib import Path
 
 # own imports
-from trajdatamanager.datamanager import RTKLibGNSSManager, Track, DataManager
+from trajdatamanager.datamanager import Track, DataManager
+from trajdatamanager.gnss import RTKLibGNSSManager, RTKLibGNSSTrack
 from trajdatamanager.utils import to_finite
 
 # local imports
@@ -62,8 +63,8 @@ class InstrumentedBicycleData():
         subdir_bike_gnss_solution=None,
         subdir_bike_gnss_report=None,
         subdir_bike_can=None,
-        rotation = 67,
-        reference_location = [51.999370, 4.370451],
+        rotation = 64.318889,
+        reference_location = [51.999370, 4.370451, 43.72],
         filter_settings = None,
         gnss_data_settings = {},
         can_data_settings = {},
@@ -132,7 +133,10 @@ class InstrumentedBicycleData():
             The default is 67.
         reference_location : list, optional
             Coordinates of the origin of of the local reference coordinate 
-            system. The default is [51.999370, 4.370451].
+            system given as (lat[deg], long[deg], height[m]). The height is interpreted as the
+            ellipsoidal height of the WGS84 reference ellipsoid. Visit https://www.unavco.org/software/
+            geodetic-utilities/geoid-height-calculator/geoid-height-calculator.html to look up the 
+            height of a desired reference location on the map. The default is (51.999370, 4.370451, 43.72).
         filter_settings : dict, optional
             Dictionary of Unscented Kalman Filter settings. 
             See the output of sensorbike.ukf.get_default_filter_settings()
@@ -626,7 +630,8 @@ class InstrumentedBicycleData():
             print("Running Unscented Kalman Filter ...", end="")
 
         keys_track = ["x_gnss", "y_gnss", "psi_gnss", "v_can", "phi_can", 
-                      "delta_can", "dpsi_can", "dphi_can", "ddelta_can", "a_can"]
+                      "delta_can", "dpsi_can", "dphi_can", "ddelta_can", "a_can", 
+                      "varx_gnss", "vary_gnss", "covxy_gnss", "varpsi_gnss"]
         keys_dict = ["x", "y", "psi", "v", "phi", "delta", "dpsi", "dphi", 
                      "ddelta", "a"]
         keys_out = ["x", "y", "psi", "v", "phi", 
@@ -661,13 +666,16 @@ class InstrumentedBicycleData():
         data_dict["psi"] = to_continous_angle(data_dict["psi"])
         
         measurements = np.zeros((len(data_dict["t"]), len(keys_dict)))
+        uncertainties = np.stack([(data_dict['varx']), data_dict['vary'], data_dict['covxy'], data_dict['varpsi']], axis=1)
+                                 
         for i, k in enumerate(keys_dict):
             measurements[:,i] = data_dict[k]
         
-        R = np.diag(R_std)
-        Q = np.diag(Q_std) 
+        R = np.diag(R_std**2)
+        Q = np.diag(Q_std**2) 
         
-        data_filtered = filter_dynamic(measurements, R, Q, 
+        data_filtered = filter_dynamic(measurements, uncertainties,
+                                       R, Q, 
                                        integration_method=int_method,
                                        bicycle_parameter_dict=bparams,
                                        plot=plot_filter_details)
