@@ -632,7 +632,7 @@ class InstrumentedBicycleData():
         keys_track = ["x_gnss", "y_gnss", "psi_gnss", "v_can", "phi_can", 
                       "delta_can", "dpsi_can", "dphi_can", "ddelta_can", "a_can", 
                       "varx_gnss", "vary_gnss", "covxy_gnss", "varpsi_gnss"]
-        keys_dict = ["x", "y", "psi", "v", "phi", "delta", "dpsi", "dphi", 
+        keys_dict = ["x", "y", "psi", "psi_can", "v", "phi", "delta", "dpsi", "dphi", 
                      "ddelta", "a"]
         keys_out = ["x", "y", "psi", "v", "phi", 
                     "delta", "dpsi", "dphi", "ddelta", "a"]
@@ -658,12 +658,14 @@ class InstrumentedBicycleData():
         #filter operates in the N frame -> transform
         data_dict = self.trk.to_dict(relative_time=self.trk.t_begin, 
                                      features=keys_track)
-        data_dict = {k.split("_")[0]: v for k, v in data_dict.items()}
+        data_dict = {k.split("_")[0]: v for k, v in data_dict.items() if k != 'psi_can'}
+        data_dict['psi_can'] = self.trk['psi_can'] 
 
         if self.current_reference_frame == 'E':
             data_dict = self.bike_geom.transform_E2N(data_dict)
         
         data_dict["psi"] = to_continous_angle(data_dict["psi"])
+        data_dict["psi_can"] = to_continous_angle(data_dict["psi_can"])
         
         measurements = np.zeros((len(data_dict["t"]), len(keys_dict)))
         uncertainties = np.stack([(data_dict['varx']), data_dict['vary'], data_dict['covxy'], data_dict['varpsi']], axis=1)
@@ -674,7 +676,7 @@ class InstrumentedBicycleData():
         R = np.diag(R_std**2)
         Q = np.diag(Q_std**2) 
         
-        data_filtered = filter_dynamic(measurements, uncertainties,
+        data_filtered, steer_angle_bias = filter_dynamic(measurements, uncertainties,
                                        R, Q, 
                                        integration_method=int_method,
                                        bicycle_parameter_dict=bparams,
@@ -1352,30 +1354,9 @@ def limit_angle(angle):
         The array of limited angles.
 
     """
-    
-    finite = np.isfinite(angle)
-    angle_fin = angle[finite]
-    
-    i = 0
-    while np.any(np.abs(angle_fin) > np.pi):
-        idx = min(np.argwhere(np.abs(angle_fin) > np.pi).flatten())
-        
-        if idx == 0:
-            sign = -1 * np.sign(angle_fin[idx])
-        else:
-            if np.gradient(angle_fin)[idx] > 0:
-                sign = -1
-            else:
-                sign = 1
-        
-        angle_fin[idx:] += sign * 2 * np.pi
-        
-        i+=1
-        if i > 100000:
-            raise RuntimeError('Endless loop!?')
-    
-    angle_out = np.nan * np.ones_like(angle)
-    angle_out[finite] = angle_fin
+    x = np.cos(angle)
+    y = np.sin(angle)
+    angle_out = np.atan2(y, x)
     
     return angle_out
 
