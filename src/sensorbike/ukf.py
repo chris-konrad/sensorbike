@@ -118,6 +118,7 @@ def make_Rscale_from_sensorchar(sensor_characteristics):
     meas = sensor_characteristics
     
     # OTHER
+    std_psi_imu = meas['IMU']['yaw']
     std_phi = meas['IMU']['roll']
     std_delta = meas['steerencoder']['angle']
     std_dpsi = meas['IMU']['gyro']
@@ -126,7 +127,8 @@ def make_Rscale_from_sensorchar(sensor_characteristics):
     std_v = meas['speedometer']['v']
     std_dv = meas['IMU']['accel']
     
-    measurement_noise_std = np.array([0, 0, 0, 
+    measurement_noise_std = np.array([0, 0, 
+                                    std_psi_imu,    # will be overwritten if GNSS present.
                                     std_v, std_phi, std_delta, 
                                     std_dpsi, std_dphi, std_ddelta, 
                                     std_dv])  
@@ -157,7 +159,8 @@ def make_Qscale_from_dict(process_noise_dict):
     process_noise_std = np.array([prcs['x'], prcs['y'], prcs['psi'], 
                                     prcs['v'], prcs['phi'], prcs['delta'],
                                     prcs['dpsi'], prcs['dphi'], 
-                                    prcs['ddelta'], prcs['dv'], prcs['b_steer']])
+                                    prcs['ddelta'], prcs['dv'], 
+                                    prcs['ang_bias'], prcs['ang_bias'], prcs['ang_bias']])
     
     return process_noise_std
 
@@ -192,16 +195,16 @@ def get_default_filter_settings():
         make_Rscale_from_sensorchar(sensor_std)  
 
      
-    process_std = {"x": 1e-6, "y": 1e-6,           # no additional uncertainty in position dynamics
-                    "psi": float(np.deg2rad(1)),   # moderate uncertainties to account for model simplifications
-                    "phi": float(np.deg2rad(1)),
-                    "delta":float(np.deg2rad(2)),    
-                    "dpsi": float(np.deg2rad(10)), # large uncertainties in rates due to zero roll/steer torque assumption
-                    "dphi": float(np.deg2rad(15)), 
-                    "ddelta": float(np.deg2rad(20)),
-                    "v": 0.5, #large uncertainties in speed and acceleration due to const. acceleration assumption                              
-                    "dv": 1,
-                    "b_steer": float(np.deg2rad(0.05))} # steer bias 
+    process_std = {"x": 1e-6, "y": 1e-6,                # no additional uncertainty in position dynamics
+                   "psi": float(np.deg2rad(1)),         # moderate uncertainties to account for model simplifications
+                   "phi": float(np.deg2rad(1)),
+                   "delta":float(np.deg2rad(2)),    
+                   "dpsi": float(np.deg2rad(10)),       # large uncertainties in rates due to zero roll/steer torque assumption
+                   "dphi": float(np.deg2rad(15)), 
+                   "ddelta": float(np.deg2rad(20)),
+                   "v": 0.5,                            # large uncertainties in speed and acceleration due to const. accel. assumption                              
+                   "dv": 1,
+                   "ang_bias": float(np.deg2rad(0.05))} # small -> roll/steer bias should converge to const.
     
     filter_settings['process_noise_std'] = \
         make_Qscale_from_dict(process_std)   
@@ -316,7 +319,9 @@ def move_dynamic(x, t_s, bp_model, integration_method='euler'):
     dphi = x[7]
     ddelta = x[8]
     dv = x[9]
-    b_steer = x[10]
+    b_psi_imu = x[10]
+    b_phi = x[11]
+    b_delta = x[12]
     
     #bicycle lateral dynamics
     x_lat = np.array([phi, delta, dphi, ddelta, psi])
@@ -340,7 +345,7 @@ def move_dynamic(x, t_s, bp_model, integration_method='euler'):
         #pack
         x_pred = [p_x_pred, p_y_pred, x_lat_pred[4], v_pred, 
                   x_lat_pred[0], x_lat_pred[1], dpsi_pred,
-                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_steer]
+                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_psi_imu, b_phi, b_delta]
         
     elif integration_method == 'midpoint':
         
@@ -367,7 +372,7 @@ def move_dynamic(x, t_s, bp_model, integration_method='euler'):
         
         x_pred = [p_x_pred, p_y_pred, x_lat_pred[4], v_pred, 
                   x_lat_pred[0], x_lat_pred[1], dpsi_pred,
-                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_steer]
+                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_psi_imu, b_phi, b_delta]
         
     else:
         raise ValueError("Unknown integration method!")
@@ -425,7 +430,7 @@ def move_kinematic(x, t_s, dv=None, dpsi = None):
     
     return x_pred
 
-def measure_dynamic(x):
+def measure_dynamic(x, use_psi_gnss):
     """
     Extract the measured states of the dynamic whipple-carvallo model.These are
     - p_x: Measured by GNSS
@@ -434,9 +439,9 @@ def measure_dynamic(x):
     - dpsi: Yaw rate from IMU
     - v: speed from IMU
     - dv: acceleration from IMU
-    - delta: steer angle from the steer encoder
+    - delta: steer angle from the steer encoder, often biased due to inaccurate calibration
     - ddelta: steer rate from the steer encoder
-    - phi: roll angle from the IMU
+    - phi: roll angle from the IMU, may be biased due to inaccurate magnetometer
     - dphi: roll rate from the IMU
     
     The state vector is [p_x, p_y, psi, v, phi, delta, dpsi, dphi, ddelta, dv].
@@ -448,10 +453,16 @@ def measure_dynamic(x):
     """
     
     C = np.eye(10)
-    C = np.c_[C, np.zeros(10)]
+    C = np.c_[C, np.zeros((10, 3))]
 
-    #steer bias
-    C[5,10] = 1 
+    #model bias in phi/delta measurement, e.g.: phi_meas = phi_true + bias_phi + noise
+    C[4,11] = 1
+    C[5,12] = 1
+
+    # model bias in IMU psi only if no GNSS isavailable.
+    if not use_psi_gnss:
+        C[2,10] = 1
+
     return (C @ x).flatten()
 
 def measure_kinematic(x, gnss_available):
@@ -488,7 +499,8 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
     This requires N equally spaced samples of the following ten measurements:
         - p_x: Measured by GNSS
         - p_y: Measured by GNSS
-        - psi: Derived from GNSS p_x and p_y
+        - psi_gnss: Derived from GNSS p_x and p_y
+        - psi_imu: Derived from IMU but heavily biased.
         - dpsi: Yaw rate from IMU
         - v: speed from IMU
         - dv: acceleration from IMU
@@ -506,11 +518,11 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
     Parameters
     ----------
     measurements : array-like
-        Measurement array of shape (N, 10).
+        Measurement array of shape (N, 11).
     uncertainties : array-like
         GNSS measurement uncertainties of shape (N, 4) with [var_x, var_y, cov_xy, var_psi].
     R : array-like
-        Measurement noise matrix (10, 10).
+        Measurement noise matrix (11, 11).
     Q : array-like
         Process noise matrix (10, 10).
     t_s : float, optional
@@ -537,7 +549,7 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
     
 
     state_labels = ['p_x', 'p_y', 'psi', 'v', 'phi', 'delta', 'dpsi', 'dphi', 
-                    'ddelta', 'dv', 'b_delta']
+                    'ddelta', 'dv', 'b_psi_imu', 'b_phi', 'b_delta']
     n_states = len(state_labels)
     n_samples = measurements.shape[0]-1
     n_measurements = n_states
@@ -553,29 +565,40 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
 
         # check gnss availability
         meas_unavilable = np.argwhere(np.logical_not(np.isfinite(m_i))).flatten()
-
-        m_i[meas_unavilable] = 0
-        R_i[meas_unavilable, meas_unavilable] = 1e10
         
+        # if x/y is available from gnss, take RTKLib covariance estimates. else, set unreliable
         if not (0 in meas_unavilable or 1 in meas_unavilable):
             R_i[:2,:2] = [[uncertainties[i,0], uncertainties[i,2]],
                           [uncertainties[i,2], uncertainties[i,1]]]
+        else:
+            m_i[0] = 0
+            m_i[1] = 0
+            R_i[0,0] = 1e10
+            R_i[1,1] = 1e10
             
-        if not (2 in meas_unavilable):
+        # if psi is available from gnss, take psi_gnss, overwrite with RTKlib uncertainty and delete psi_imu
+        use_psi_gnss = not (2 in meas_unavilable)
+        if use_psi_gnss:
+            m_i = np.delete(m_i, 3)
             R_i[2,2] = uncertainties[i,3]
+        else: 
+            m_i = np.delete(m_i, 2)
 
         R_i[~np.isfinite(R_i)] = 1e10
 
-        return m_i, R_i
+        return m_i, R_i, use_psi_gnss
 
     
     # intial conditions
-    x0, P0_meas = get_measurement(0)
-    x0 = np.r_[x0, 0]
-    P0 = np.zeros((x0.size, x0.size))
-    P0[:10, :10] = P0_meas
-    P0[5,5] = np.pi**2   #any valid angle is a reasonable initial guess for the steer angle (due to potential bias)
-    P0[-1, -1] = np.pi**2   #any valid angle is reasonable guess for the bias
+    x0, P0_meas, use_psi_gnss = get_measurement(0)    # first state measurement is initial guess
+    x0 = np.r_[x0, [0, 0, 0]]              # add steer and roll angle bias      
+    P0 = np.zeros((x0.size, x0.size))   
+    P0[:10, :10] = P0_meas              # first measurement uncertainty is initial covariance
+    P0[[4,5],[4,5]] = np.pi**2          # inflate cov for steer/roll: could be any valid angle due to bias
+    P0[[10,11,12], [10,11,12]] = np.pi**2     # inflate cov for yaw/steer/roll bias: could be any valid angle 
+
+    if not use_psi_gnss:
+        P0[[2,2],[2,2]] = np.pi**2      # inflate cov for yaw only if not from gnss: could be any valid angle due to bias
     
     # setup bicycle parameters
     if bicycle_parameter_dict is None:
@@ -613,8 +636,8 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
         ukf.predict()
 
         # update
-        m_i, R_i = get_measurement(i+1)
-        ukf.update(m_i, R=R_i)
+        m_i, R_i, use_psi_gnss = get_measurement(i+1)
+        ukf.update(m_i, R=R_i, use_psi_gnss=use_psi_gnss)
         
         states_filtered[i+1,:] = ukf.x
         covs_filtered[i+1,:,:] = ukf.P
@@ -626,6 +649,7 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
         states_smoothed, covs_smoothed, _ = ukf.rts_smoother(states_filtered, 
                                                              covs_filtered)
         
+        # never used smoothed speed. May be unreliable
         states_smoothed[:, 3] = states_filtered[:, 3]
     
     #plot filter results
@@ -656,20 +680,25 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
         ax0.legend()
         
         #time plot
+        off = 0
         fig1, axes1 = plt.subplots(n_states, 1, sharex=True, layout='constrained')
-            
         for i in range(n_states):
-            axes1[i].set_ylabel(state_labels[i])
-
             minval = np.inf
             maxval = -np.inf
             
-            if i < n_states-1:
+            if i < n_states-3 and i!=3:
                 m = measurements[:,i]
                 finite = np.isfinite(m)
-                axes1[i].plot(t[finite], m[finite], color = 'blue', label = 'data')
+                axes1[i-off].plot(t[finite], m[finite], color = 'blue', label = 'data')
                 minval = min(minval, np.min(m))
                 maxval = max(maxval, np.max(m))
+            elif i==3:  #plot psi_imu into psi plot as well.
+                m = measurements[:,i]
+                finite = np.isfinite(m)
+                axes1[i-1].plot(t[finite], m[finite] - states_smoothed[:,-3], color = 'gray', linestyle='dashed', label = 'data')
+                minval = min(minval, np.min(m))
+                maxval = max(maxval, np.max(m))
+                off = 1
 
             axes1[i].plot(t, states_filtered[:,i], color = 'orange', label = 'filtered')
             axes1[i].fill_between(t, states_filtered[:,i]+np.sqrt(covs_filtered[:,i,i]), 
@@ -687,19 +716,24 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
 
             rng = maxval - minval
             axes1[i].set_ylim(minval - 0.2 * rng, maxval + 0.2 * rng)
+            axes1[i].set_ylabel(state_labels[i])
+
         axes1[0].legend()
         axes1[-1].set_xlabel('t [s]')
         axes1[0].set_title("Filtered Trajectories")
         fig1.set_size_inches(10.5, 9)
-            
+
+    # output 
     if smooth:
-        steer_angle_bias = np.median(states_smoothed[:,-1])
-        states_smoothed = states_smoothed[:,:-1]
-        return states_smoothed, steer_angle_bias
+        states_out = states_smoothed
     else:
-        steer_angle_bias = np.median(states_smoothed[:,-1])
-        states_filtered = states_filtered[:,:-1]
-        return states_filtered, steer_angle_bias
+        states_out = states_filtered
+    
+    biases_out = {k: states_out[:,state_labels.index(k)] for k in ['b_phi', 'b_delta']}
+
+    states_out = states_out[:,:-len(biases_out)]
+
+    return states_out, biases_out
         
 
 def filter_kinematic(measurements, R, Q, t_s=0.01):
