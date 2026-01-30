@@ -214,6 +214,20 @@ class InstrumentedBicycleData():
         self.trk = None
         self.trk_filtered = None
         
+        # plot params
+        marker = '.'
+        markersize = 0.5
+        linewidth = 0.5
+        self.lineplot_kwargs = {"marker": marker, "linewidth": linewidth, "markersize": markersize}
+
+        self.colors = dict(
+            gnss = '#EC6842', 
+            imu = '#A50034',
+            steer_encoder = '#00A6D6',
+            wheelspeed = '#0076C2',
+            ukf_filter='#FFB81C',
+            rts_smoother='#009B77')
+        
     
     def _transform_gnss_to_rearwheel(self, trk):
         """
@@ -279,7 +293,7 @@ class InstrumentedBicycleData():
         t,  t_span = self._find_time_frame(trk_gnss, trk_can) 
 
         #convert to continous angles
-        trk_can = _to_continous_angles(trk_can)
+        #trk_can = _to_continous_angles(trk_can)
         trk_can.sample_at_times(np.r_[t, t[-1]+dt.timedelta(seconds=self.t_s)])
 
         t = trk_can.t
@@ -299,7 +313,8 @@ class InstrumentedBicycleData():
                [k + "_can" for k in trk_can.data_feature_keys]
 
         metadata = {"meta_gnss": trk_gnss.metadata, 
-                    "meta_can": trk_can.metadata}   
+                    "meta_can": trk_can.metadata,
+                    "reference_frame": "sensor"}   
         
         trk = Track(self.name, 0, t, data, 
                     data_feature_keys = feat, 
@@ -476,9 +491,17 @@ class InstrumentedBicycleData():
         return trk_gnss
     
     
-    def load_raw(self, t_begin=None, t_end=None, verbose=True, plot_data=True):
+    def load_raw(self, t_begin=None, t_end=None, verbose=True, plot=True):
         """
-        Load raw sensor data from the instrumented bicycle.
+        Load raw sensor data from the instrumented bicycle. This loads GNSS
+        measurements and CAN logs, aligns them into the same timeframe and
+        stores them in a single track object. 
+
+        The measurements are not transformed to bicycle states. Instead they 
+        are left in their original sensor reference frame. The only exception 
+        is GNSS, which is transformed from Lat/Long/Height (LLH) to XY rotated
+        by 'rotation' (specified in the constructor) relative to East/North around
+        Up. 
 
         Parameters
         ----------
@@ -499,49 +522,138 @@ class InstrumentedBicycleData():
         """
         # run gnss data
         if verbose:
-            print("Loading position data ...", end="")
+            print("Loading gnss data ... ", end="")
         trk_gnss = self._load_gnss(t_begin=t_begin, t_end=t_end)
         if verbose:
             print("done!")
             
         # run bike dynamics data
         if verbose:
-            print("Loading can data ...", end="")
+            print("Loading can data ... ", end="")
         trk_can = self._load_can()
         if verbose:
             print("done!")
            
         # align time frames
         if verbose:
-            print("Combine datasets ...", end="")
-        trk = self._combine_datasets(trk_gnss, trk_can)
+            print("Combine datasets ... ", end="")
+        trk_raw = self._combine_datasets(trk_gnss, trk_can)
         if verbose:
             print("done!")
         
         # transform gnss to rear-wheel contact point
-        if self.transfrom_to_rwcontactpoint:
-            if verbose:
-                print(("Transforming gnss data to rear-wheel "
-                       "contact point ..."), end="")
-            trk = self._transform_gnss_to_rearwheel(trk)
-            # desired reference frame
-            trk = self._transform_to_desired_referenceframe(trk)
-            if verbose:
-                print("done!")
+        #if self.transfrom_to_rwcontactpoint:
+        #    if verbose:
+        #        print(("Transforming gnss data to rear-wheel "
+        #               "contact point ..."), end="")
+        #    trk = self._transform_gnss_to_rearwheel(trk)
+        #    # desired reference frame
+        #    trk = self._transform_to_desired_referenceframe(trk)
+        #    if verbose:
+        #        print("done!")
                        
-        self.trk = trk
+        self.trk_raw = trk_raw
         self.data_loaded = True
 
         #plotting
-        if plot_data:
+        if plot:
             if verbose:
-                print("Plotting data ...", end="")
-                axes_t, axes_xy = self.plot_data(self.trk)
+                print("Plotting raw sensor data ...", end="")
+            fig, axes = self.plot_raw()
             if verbose:
                 print("done!")
 
         return self.trk
     
+
+    def transform_raw2states(self, reference_frame='E', plot=False):
+        """Transfrom the raw sensor data in to bicycle states represented in the 
+        chosen reference Frame.
+
+        Parameters
+        ----------
+        reference_frame : str, optional
+            The frame to represent the data in. Choose from 'E' and 'N'. The 
+            N-frame is the frame with x and y directions fixed to the ground and z pointing
+            into the ground (as common in bicycle dynamic research and used for the Carvallo-Whipple model). 
+            The E-frame is the frame with x and y directions fixed to the ground 
+            and z pointing upwards (as common in traffic engineering and used for 
+            cyclistsocialforces). The default is 'E'. 
+        plot : bool, optional
+            Plot the transformed data, by default False
+        """
+
+        features_can = ["delta", "ddelta", "phi", "gyrox", "psi", "gyroz", "vrws", "ax"]
+        idx_can = [self.trk_raw.data_feature_keys.index(k+'_can') for k in features_can]
+        can_measurements = self.trk_raw.data[:,idx_can]
+
+        features_gnss = ["x", "y", "psi", "v"]
+        idx_gnss = [self.trk_raw.data_feature_keys.index(k+'_gnss') for k in features_gnss]
+        gnss_measurements = self.trk_raw.data[:,idx_gnss]
+
+        if reference_frame == 'E':        
+            states_E = np.empty((can_measurements.shape[0], 10))
+            states_E[:,4] = can_measurements[:,2]
+
+            states_can_transformed = self.bike_geom.transform_can2stateE(can_measurements, states_E)
+            states_gnss_transformed = self.bike_geom.transform_gnss2stateE(gnss_measurements, states_can_transformed)
+        elif reference_frame == 'N':
+            states_N = np.empty((can_measurements.shape[0], 10))
+            states_N[:,4] = - can_measurements[:,2]
+
+            states_can_transformed = self.bike_geom.transform_can2stateN(can_measurements, states_N)
+            states_gnss_transformed = self.bike_geom.transform_gnss2stateN(gnss_measurements, states_can_transformed)            
+
+        # extract existing
+        states_can_transformed = states_can_transformed[:,2:]
+        features_can_transformed = ["psi_can", "v_can", "phi_can", "delta_can", "psidot_can", "phidot_can", "deltadot_can", "a_can"]
+
+        states_gnss_transformed = states_gnss_transformed[:,:4]
+        features_gnss_transformed = ['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss']
+
+        metadata = dict(reference_frame=reference_frame, track_type='raw_states')
+
+        self.trk_raw_states = Track(f'Raw States ({reference_frame} frame): {self.name}', 2, self.trk_raw.t,
+                    np.c_[states_gnss_transformed, states_can_transformed],
+                    data_feature_keys=features_gnss_transformed+features_can_transformed,
+                    metadata=metadata)
+        
+        if plot:
+            self.plot_raw_states()
+
+        return self.trk_raw_states
+
+
+    def plot_raw_states(self):
+        """Plot the raw sensor data transformed to raw state trajectories.
+
+        Returns
+        -------
+        fig, axes
+            Figure and axes of the plot.
+        """
+
+        if self.trk_raw_states:
+            trk = self.trk_raw_states
+        else:
+            raise RuntimeError(f"No raw state trajectory found! Run load_raw() and transform_raw2states() before calling plot_raw_states()!")
+        
+        features_can_transformed = np.array(["psi_can", "v_can", "phi_can", "delta_can", "psidot_can", "phidot_can", "deltadot_can", "a_can"])
+        features_gnss_transformed = np.array(['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss'])
+        
+        fig, axes = plt.subplots(10,1, sharex=True, layout='constrained')
+        trk.plot(axes=axes[:4], features=features_gnss_transformed, color=self.colors['gnss'], plot_over_timestamps=True)
+        trk.plot(axes=axes[[2,4,6,7,9]], features=features_can_transformed[[0,2,4,5,7]], color=self.colors['imu'], plot_over_timestamps=True)
+        trk.plot(axes=axes[3], features=features_can_transformed[1], color=self.colors['wheelspeed'], plot_over_timestamps=True)
+        trk.plot(axes=axes[[5,8]], features=features_can_transformed[[3,6]], color=self.colors['steer_encoder'], plot_over_timestamps=True)
+
+        for ax, lbl in zip(axes, trk.data_feature_keys[:2]+trk.data_feature_keys[4:]):
+            ax.set_ylabel(lbl.split('_')[0])
+        axes[-1].set_xlabel('time')
+        axes[0].set_title(trk.track_id)
+
+        return fig, axes
+
 
     def _transform_to_desired_referenceframe(self, trk):
 
@@ -557,43 +669,15 @@ class InstrumentedBicycleData():
         return trk
 
     
-    def apply_filter(self, measurement_noise_std=None, 
-                           process_noise_std=None,
-                           integration_method=None,
-                           bicycle_parameter_dict=None,
-                           plot_data=True,
+    def apply_filter(self, plot_data=True,
                            plot_filter_details=False,
                            verbose=True):
-        
         """
         Filter the data from the instrumented bike with anUnscented Kalman 
         Filter.
 
         Parameters
         ----------
-        measurement_noise_std : array, optional
-            Array of sensor noise variances for filtering in the order
-            [std_x, std_y, std_psi, std_v, std_phi, std_delta, std_dpsi, 
-             std_dphi, std_ddelta, std_dv]. If None, values are given 
-            by sensorbike.ukf.get_default_filter_settings(). The default is 
-            None.
-        process_noise_std : array, optional
-            Array of process noise variances for filtering in the 
-            order [std_x, std_y, std_psi, std_v, std_phi, std_delta, std_dpsi, 
-             std_dphi, std_ddelta, std_dv]. If None, values are given by 
-            sensorbike.ukf.get_default_filter_settings(). The default is None.
-        integration_method: str, optional
-            The integration method for the integration of the system dynamics 
-            in the prediction step. Can be 'backward euler' or 'midpoint'. 
-            The default is 'midpoint'.
-        bicycle_parameter_dict : dict, optional
-            The dictionary of physical bicycle parameters for the prediction
-            of the bicycle dynamics. The dictionary is expected to be in the 
-            format defined by BicycleParameters (https://github.com/moorepants/
-            BicycleParameters/tree/master). The parameters should be measured 
-            from the actual bicycle used to collect the data. Uses
-            meijaard2007_browser_jason per default which are not correct for the
-            balance assist bicycle.
         verbose : bool, optional
             Verbose output. The default is True.
         plot_data : bool, optional
@@ -612,58 +696,45 @@ class InstrumentedBicycleData():
         if verbose:
             print("Running Unscented Kalman Filter ...", end="")
 
-        keys_track = ["x_gnss", "y_gnss", "psi_gnss", "v_can", "phi_can", 
-                      "delta_can", "dpsi_can", "dphi_can", "ddelta_can", "a_can", 
-                      "varx_gnss", "vary_gnss", "covxy_gnss", "varpsi_gnss"]
-        keys_dict = ["x", "y", "psi", "psi_can", "v", "phi", "delta", "dpsi", "dphi", 
-                     "ddelta", "a"]
         keys_out = ["x", "y", "psi", "v", "phi", 
                     "delta", "dpsi", "dphi", "ddelta", "a"]
         
-        def _parse_settings(sname, sval):
-            if sval is None:
-                if sname in self.filter_settings.keys():
-                    return self.filter_settings[sname]
-                else:
-                    msg = (f"Filter settings must provide '{sname}'!")
-                    raise KeyError(msg)
+        def _parse_settings(sname):
+            if sname in self.filter_settings.keys():
+                return self.filter_settings[sname]
             else:
-                return sval
+                msg = (f"Filter settings must provide '{sname}'!")
+                raise KeyError(msg)
         
-        R_std = _parse_settings('measurement_noise_std', 
-                                  measurement_noise_std)
-        Q_std = _parse_settings('process_noise_std', process_noise_std)
-        int_method = _parse_settings('integration_method', integration_method)
-        bparams = _parse_settings('bicycle_parameter_dict', 
-                                  bicycle_parameter_dict)
+        R = _parse_settings('R')
+        Q = _parse_settings('Q')
+        int_method = _parse_settings('integration_method')
+        bparams = _parse_settings('bicycle_parameter_dict')
+        
+        features_track_gnss = ["x_gnss", "y_gnss", "psi_gnss", "v_gnss"]
+        idx_gnss = [self.trk_raw.data_feature_keys.index(k) for k in features_track_gnss]
+        measurements_gnss = self.trk_raw.data[:,idx_gnss]
 
-        #the measurements are in the E frame. The bike model of the kalman
-        #filter operates in the N frame -> transform
-        data_dict = self.trk.to_dict(relative_time=self.trk.t_begin, 
-                                     features=keys_track)
-        data_dict = {k.split("_")[0]: v for k, v in data_dict.items() if k != 'psi_can'}
-        data_dict['psi_can'] = self.trk['psi_can'] 
+        uncertainties_track_gnss = ["varx_gnss", "vary_gnss", "varpsi_gnss", "varv_gnss", "covxy_gnss"] 
+        idx_gnss_uncert = [self.trk_raw.data_feature_keys.index(k) for k in uncertainties_track_gnss]
+        uncertainties_gnss = self.trk_raw.data[:,idx_gnss_uncert]
 
-        if self.current_reference_frame == 'E':
-            data_dict = self.bike_geom.transform_E2N(data_dict)
+        features_track_can = ["delta_can", "ddelta_can", "phi_can", "gyrox_can", "psi_can", "gyroz_can", "vrws_can", "ax_can"]
+        idx_can = [self.trk_raw.data_feature_keys.index(k) for k in features_track_can]
+        measurements_can = self.trk_raw.data[:,idx_gnss]
+
+        measurements_gnss[:,4] = to_continous_angle(measurements_gnss[:,4])
+        measurements_can[:,4] = to_continous_angle(measurements_can[:,4])
+
         
-        data_dict["psi"] = to_continous_angle(data_dict["psi"])
-        data_dict["psi_can"] = to_continous_angle(data_dict["psi_can"])
-        
-        measurements = np.zeros((len(data_dict["t"]), len(keys_dict)))
-        uncertainties = np.stack([(data_dict['varx']), data_dict['vary'], data_dict['covxy'], data_dict['varpsi']], axis=1)
-                                 
-        for i, k in enumerate(keys_dict):
-            measurements[:,i] = data_dict[k]
-        
-        R = np.diag(R_std**2)
-        Q = np.diag(Q_std**2) 
-        
-        data_filtered, steer_angle_bias = filter_dynamic(measurements, uncertainties,
-                                       R, Q, 
-                                       integration_method=int_method,
-                                       bicycle_parameter_dict=bparams,
-                                       plot=plot_filter_details)
+        data_filtered, steer_angle_bias = filter_dynamic(measurements_gnss, 
+                                                         uncertainties_gnss, 
+                                                         measurements_can,
+                                                         R, Q, 
+                                                         integration_method=int_method,
+                                                         bicycle_parameter_dict=bparams,
+                                                         plot=plot_filter_details,
+                                                         bicycle_geometry=self.bike_geom)
         
         #the smoothed results are in the N frame. The measurements
         #are assumed to be in the E frame -> transform
@@ -679,17 +750,11 @@ class InstrumentedBicycleData():
         
         for i, k in enumerate(keys_out):
             data_filtered[:,i] = data_dict_filt[k]
+    
         
-        metadata_filtered = dict(self.trk.metadata)
-        metadata_filtered['filter_settings'] = {
-            'measurement_noise_std': R_std,
-            'process_noise_std': Q_std,
-            'integration_method': int_method,
-            'bicycle_parameter_dict': bparams}
-        
-        self.trk_filtered = Track(self.name+'/filtered', 0, self.trk.t, 
+        self.trk_filtered = Track(f"Filtered states (E-frame): {self.name}", 0, self.trk.t, 
                                   data_filtered, data_feature_keys=keys_out,
-                                  metadata = metadata_filtered, 
+                                  metadata = self.trk.metadata, 
                                   yaw_feature_index=2)
         
         if verbose:
@@ -771,79 +836,47 @@ class InstrumentedBicycleData():
         return self.trk_filtered
     
         
-    def plot_data(self, plot_raw = True, plot_filtered=True):
+    def plot_raw(self):
         """
-        Plot the loaded data over time and in the xy-plane.
-
-        Parameters
-        ----------
-        plot_raw : bool, optional
-            If available, plot the raw data. The default is True.
-        plot_filtered : bool, optional
-            If available, plot the filtered data. The default is True.
-
-        Returns
-        -------
-        axes_t : array
-            Array of axes of the time plot.
-        axes_xy : TYPE
-            Axis of the xy plot.
-            
+        Plot the raw data per sensor over time.
         """
         
-        col_gnss = 'blue'
-        col_can = 'green'
-        col_fil = 'orange'
+        plot_kwargs = self.lineplot_kwargs
         
-        marker = '.'
-        markersize = 3
-        linewidth = 0.5
-        plot_kwargs = {"marker": marker, "linewidth": linewidth,
-                       "markersize": markersize}
+        fig_t, axes_t = plt.subplots(12,1, sharex=True, layout='constrained')
+            
+        #gnss
+        axes_t[0].set_title('RTK GNSS (SwiftNav Piki Multi)')
+        feat_gnss = ['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss']
+        self.trk_raw.plot(features=feat_gnss, axes = axes_t[0:4],
+                        plot_over_timestamps=True, 
+                        color=self.colors['gnss'], **plot_kwargs)
         
-        fig_t, axes_t = plt.subplots(10,1, sharex=True)
-        fig_xy, axes_xy = plt.subplots(1,1)
+        #imu
+        axes_t[4].set_title('Onboard IMU (BNO086)')
+        feat_imu = ['psi_can', 'gyroz_can', 'phi_can', 'gyrox_can', 'ax_can']
+        self.trk_raw.plot(features=feat_imu, axes = axes_t[4:9],
+                plot_over_timestamps=True, 
+                color=self.colors['imu'], **plot_kwargs)
         
-        if plot_raw and self.trk is not None:
-            
-            #gnss
-            feat_gnss = ['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss']
-            self.trk.plot(features=feat_gnss, axes = axes_t[[0, 1, 2, 8]],
-                          plot_over_timestamps=True, label='gnss', 
-                          color=col_gnss, **plot_kwargs)
-            axes_xy = self.trk.plot_xy(ax=axes_xy, label='gnss', 
-                                       color=col_gnss, **plot_kwargs)
-            
-            #can
-            
-            feat_can = ['psi_can', 'dpsi_can', 'delta_can', 'ddelta_can',
-                        'phi_can', 'dphi_can', 'v_can', 'a_can']
-            self.trk.plot(features=feat_can, axes = axes_t[[2, 3, 4, 5, 
-                                                            6, 7, 8, 9]],
-                          plot_over_timestamps=True, label='can', 
-                          color=col_can, **plot_kwargs)
-        
-        if plot_filtered and self.trk_filtered is not None:
-            
-            #gnss
-            feat_filt = ["x", "y", "psi", "dpsi", "delta", "phi", "dphi", "v"]
-            self.trk_filtered.plot(features=feat_filt, axes = axes_t[[0, 1, 2, 
-                                                                      3, 4, 6, 
-                                                                      7, 8, ]],
-                          plot_over_timestamps=True, label='filtered', 
-                          color=col_fil, **plot_kwargs)
-            axes_xy = self.trk_filtered.plot_xy(ax=axes_xy, label='filtered', 
-                                       color=col_fil, **plot_kwargs)
+        #steer encoder
+        axes_t[9].set_title('Steer Encoder')
+        feat_enc = ['delta_can', 'ddelta_can']
+        self.trk_raw.plot(features=feat_enc, axes = axes_t[9:11],
+                plot_over_timestamps=True, 
+                color=self.colors['steer_encoder'], **plot_kwargs)
+
+        #wheelspeed sensor
+        axes_t[11].set_title('Wheelspeed sensor (rear)')
+        feat_wsp = ['vrws_can',]
+        self.trk_raw.plot(features=feat_wsp, axes = [axes_t[11]],
+                        plot_over_timestamps=True, 
+                        color=self.colors['wheelspeed'], **plot_kwargs)
             
         axes_t[-2].legend()
-        axes_t[0].set_title(self.name)
-        axes_xy.legend()
-        axes_xy.set_ylabel('y [m]')
-        axes_xy.set_xlabel('x [m]')
-        axes_xy.set_title(self.name)
-        axes_xy.set_aspect('equal')
+        axes_t[0].set_title(f"Raw Sensor Data: {self.name}")
         
-        return axes_t, axes_xy
+        return fig_t, axes_t
     
 class BalanceAssistLogDataManager(DataManager):
     """
@@ -860,6 +893,7 @@ class BalanceAssistLogDataManager(DataManager):
                  bike_geometry, 
                  dbc_file=None, 
                  steer_angle_bias = 19.5,
+                 circumfence_rear_wheel = 221,
                  ins_filename_suffix = "-ins"):
         """
         Create a BalanceAssistLogDataManager.
@@ -875,9 +909,14 @@ class BalanceAssistLogDataManager(DataManager):
         bike_geometry : InstrumentedBikeGeometry
             InstrumentedBikeGeometry for coordinate transformations.
         steer_angle_bias : float, optional
-            A constant bias of the steer angle measurement in deg. 
-            The default is 19.5.
-
+            The steer encoder typically shows a constant bias. If this is 
+            known, it can be specified here in degrees. The default (often close) is 
+            19.5 deg.
+        circumfence_rear_wheel : float, optional
+            The circumfence of the rear wheel in cm. The default is 
+            221 cm. This can be adjusted to account for rider weight and
+            tire pressure, for example, for a 70 kg rider and 3 bar, the
+            effective circumfence reduces to 219.25 cm. 
         Returns
         -------
         None.
@@ -892,6 +931,7 @@ class BalanceAssistLogDataManager(DataManager):
         self.dir_gnss_report = path_gnss_report
         self.bike_geom = bike_geometry
         self.steer_angle_bias = steer_angle_bias
+        self.circumfence_rear_wheel = circumfence_rear_wheel
         self.ins_filename_suffix = ins_filename_suffix
 
 
@@ -942,31 +982,24 @@ class BalanceAssistLogDataManager(DataManager):
         a_can = np.array(a_can)
         t_a_can, a_can, mask = to_finite(t_can, test=a_can, return_mask=True)
         
-        # roll and yaw and linear acceleration
+        # roll and yaw and linear acceleration from the IMU
         df = df.interpolate(method='time', limit=5)
-        yaw, dyaw, roll, droll, accel = self.bike_geom.transform_imu2bike(
-            df["yaw"],
-            df["roll"],
-            df["gyro_x"],
-            df["gyro_z"],
-            df["accel_x"],
-            )
+        yaw = df["yaw"]
+        roll = df["roll"]
+        gyro_x = df["gyro_x"]
+        gyro_z = df["gyro_z"]
+        accel = df["accel_x"]
 
         # speed
-        #   Derived from the rear wheelspeed assuming a circumfence of 221cm
-        #   With rider (approx 70kg) and 3.0 bar tirepressure, the effective
-        #   circumfence reduces to 219.25cm
-        speed = np.array(df["ws_rear"]) * (219.25/221)
+        #   Derived from the rear wheelspeed assuming a nominal circumfence of 221cm
+        speed = np.array(df["ws_rear"]) * (self.circumfence_rear_wheel/221)
         
         # steer angle
         #   The steer assist biccle assumes a wrong sensor bias. This is 
-        #   corrected here. Additionally direction definitions varies.
+        #   corrected here. 
         #   Definition on the balance-assist bikes: right+, left-
-        #   Definition in cyclistsocialforces: right-, left+
-        steer = -(
-            np.pi * (np.array(df["LWS_ANGLE"]) - self.steer_angle_bias) / 180
-        )
-        dsteer = -(np.pi * np.array(df["LWS_SPEED"]) / 180)
+        steer = np.deg2rad(df["LWS_ANGLE"].to_numpy() - self.steer_angle_bias)
+        dsteer = np.deg2rad(df["LWS_SPEED"].to_numpy() - self.steer_angle_bias)
 
         # extract GNSS IMU data for time synchronisation of the CAN data
         t_gnss_global, a_gnss, path_timesync_source = self.load_gnss_imu(
@@ -997,7 +1030,7 @@ class BalanceAssistLogDataManager(DataManager):
         n_offset = (np.argmax(a_corr) - len(a_gnss_interp) + 1)
         t_offset = n_offset * t_ss
             #t_offset = -np.argmax(a_corr) * 0.005
-        print(f"Time offset: {t_offset} s", end="")
+        print(f"Time offset: {t_offset:.4f} s ", end="")
 
         #plot for validation
         fig, ax = plt.subplots(1,1)
@@ -1036,7 +1069,7 @@ class BalanceAssistLogDataManager(DataManager):
 
         metadata = {
             "track_type": "BalanceAssistLogData",
-            "source":can_files,
+            "source": can_files,
             "source_timesync": path_timesync_source,
             "dbc_file": self.dbc_file,
             "time_offset": t_offset,
@@ -1047,9 +1080,9 @@ class BalanceAssistLogDataManager(DataManager):
             'can',
             2,
             t_can_global,
-            np.c_[steer, dsteer, roll, droll, yaw, dyaw, speed, accel],
-            data_feature_keys=["delta", "ddelta", "phi", "dphi", "psi", 
-                               "dpsi", "v", "a"],
+            np.c_[steer, dsteer, roll, gyro_x, yaw, gyro_z, speed, accel],
+            data_feature_keys=["delta", "ddelta", "phi", "gyrox", "psi", 
+                               "gyroz", "vrws", "ax"],
             metadata=metadata,
         )
 
@@ -1197,14 +1230,6 @@ class InstrumentedBikeGeometry:
 
         self.params = bike_params
 
-        # parameter for the position of the GNSS antenna
-        if not np.all([k in self.params.keys() for k in ['l_gnss', 'h_gnss']]):
-            msg = ("The calibration must include measurements of the antenna"
-                   "height over ground 'h_gnss' and horizontal distance"
-                   "to the rear-wheel contanct point 'l_gnss'.")
-            raise ValueError(msg)
-        self.param_vals = {l_gnss: self.params['l_gnss'], h_gnss: self.params['h_gnss']}
-
         self._init_can_transformations()
         self._init_gnss2rwcp_transformations()
         self._init_rwcp2gnss_transformations()
@@ -1224,20 +1249,30 @@ class InstrumentedBikeGeometry:
         
         h_gnss, l_gnss = sm.symbols('h_gnss, l_gnss')
         x_gnss, y_gnss, v_gnss, psi_gnss = sm.symbols('x_gnss y_gnss v_gnss psi_gnss')
+
+        # parameter for the position of the GNSS antenna
+        if not np.all([k in self.params.keys() for k in ['l_gnss', 'h_gnss']]):
+            msg = ("The calibration must include measurements of the antenna"
+                   "height over ground 'h_gnss' and horizontal distance"
+                   "to the rear-wheel contanct point 'l_gnss'.")
+            raise ValueError(msg)
+        self.param_vals = {l_gnss: self.params['l_gnss'], h_gnss: self.params['h_gnss']}
         
         # Set rotations of reference frames
         N.orient_body_fixed(E, (sm.pi, 0, 0), 'XYZ')
-        B.orient_body_fixed(E, (psi_E, phi, 0), 'ZXY')
+        B.orient_body_fixed(N, (-psi_E, phi, 0), 'ZXY')
 
         Prwcp = me.Point('P_rwcp')
+        Pgnss = me.Point('P_gnss')
+        Pgnss.set_pos(Prwcp, - l_gnss * B.x - h_gnss * B.z)
         #Prwcp.set_vel(E, v)
-        Pgnss = Prwcp.locatenew('P_gnss', - l_gnss * B.x - h_gnss * B.z)
+        #Pgnss = Prwcp.locatenew('P_gnss', - l_gnss * B.x - h_gnss * B.z)
         r_Prwcp_Pgnss = Prwcp.pos_from(Pgnss).express(E)
         r_Prwcp_Pgnss = r_Prwcp_Pgnss.subs(self.param_vals)
 
         frames = (E, N, B, Sgnss)
         states_E = (x, y_E, psi_E, v, phi, delta, psidot_E, phidot, deltadot, a)
-        gnss_measurements = (x_gnss, y_gnss, v_gnss, psi_gnss)
+        gnss_measurements = (x_gnss, y_gnss, psi_gnss, v_gnss)
         points = (Pgnss, Prwcp)
 
         return frames, states_E, gnss_measurements, points, r_Prwcp_Pgnss
@@ -1249,19 +1284,20 @@ class InstrumentedBikeGeometry:
         Creates a function to derive the position, speed and planar orientation 
         of the rear-wheel contact point given gnss measurements and the bicycles
         roll angle.
+
+        The GNSS measures the position and velocity of the antenna in the E.x/E.y plane.
         """
 
         frames, states_E, gnss_measurements, points, r_Prwcp_Pgnss = self._init_symbols()
         
         E, N, B, Sgnss = frames 
-        x, y_E, psi_E, v, phi, delta, psidot_E, phidot, deltadot, a = states_E
-        x_gnss, y_gnss, v_gnss, psi_gnss = gnss_measurements
+        x_gnss, y_gnss, psi_gnss, v_gnss = gnss_measurements
         Pgnss, Prwcp = points
 
         Sgnss.orient_body_fixed(E, (0, 0, psi_gnss), 'XYZ')
         Pgnss.set_vel(E, Sgnss.x * v_gnss)
 
-        vel_rwcp_E = Prwcp.vel(E).subs(self.param_vals)
+        vel_rwcp_E = Prwcp.v2pt_theory(Pgnss, E, B).subs(self.param_vals)
         speed_rwcp_E = sm.sqrt(vel_rwcp_E.dot(E.x)**2 + vel_rwcp_E.dot(E.y)**2)
         psi_rwcp_E = sm.atan2(vel_rwcp_E.dot(E.y), vel_rwcp_E.dot(E.x))
         x_rwcp_E = x_gnss + r_Prwcp_Pgnss.dot(E.x)
@@ -1287,7 +1323,7 @@ class InstrumentedBikeGeometry:
 
         Prwcp.set_vel(E, v * B.x)
 
-        vel_gnss_E = Pgnss.vel(E).subs(self.param_vals)
+        vel_gnss_E = Pgnss.v2pt_theory(Prwcp, E, B).subs(self.param_vals)
         speed_gnss_E = sm.sqrt(vel_gnss_E.dot(E.x)**2 + vel_gnss_E.dot(E.y)**2)
         psi_gnss_E = sm.atan2(vel_gnss_E.dot(E.y), vel_gnss_E.dot(E.x))
         x_gnss_E = x - r_Prwcp_Pgnss.dot(E.x)
@@ -1323,19 +1359,19 @@ class InstrumentedBikeGeometry:
         can_measurements = [delta_enc, deltadot_enc, phi_imu, wx_imugyro, psi_imu, wz_imugyro, v_rws, ax_imuaccel]
 
         # imu2E and vice-versa
-        B_w_E_Bz = B.ang_vel_in(E).dot(B.z)                 #what the gyro measures in E
-        B_w_E_Ez = sm.trigsimp(B.ang_vel_in(E).dot(E.z))    #bicycle yaw rate in E=
+        B_w_E_Bz = B.ang_vel_in(E).dot(-B.z)                 #what the gyro measures in E
+        B_w_E_Ez = sm.trigsimp(B.ang_vel_in(E).dot(E.z))     #bicycle yaw rate in E=
 
         B_w_E_Ez_solution = sm.solve(B_w_E_Bz - wz_imugyro, B_w_E_Ez)[0]
         B_w_E_Bz_solution = sm.solve(B_w_E_Ez_solution - psidot_E, wz_imugyro)[0]
 
         x, y_E, psi_E, v, phi, delta, psidot_E, phidot, deltadot, a
-        can_E = (None, None, psi_imu, v_rws, phi_imu, delta_enc, B_w_E_Ez_solution, wx_imugyro, deltadot_enc, ax_imuaccel)
+        can_E = ( - psi_imu, v_rws, phi_imu, - delta_enc, B_w_E_Ez_solution, wx_imugyro, - deltadot_enc, ax_imuaccel)
         self._eval_can2E = sm.lambdify((can_measurements, states_E), can_E)
         self._eval_E2can = sm.lambdify(states_E, [delta, deltadot, phi, phidot, psi_E, B_w_E_Bz_solution, v, a])
 
 
-    def transform_gnss2stateE(self, gnss_measurement, states_E):
+    def transform_gnss2stateE(self, gnss_measurements, states_E):
         """ Transform a GNSS measurement to a bicycle state in the E frame.
 
         The transformation depends on the lateral bicycle states. Thus, 
@@ -1358,7 +1394,19 @@ class InstrumentedBikeGeometry:
             that do not have a corresponding measurement from the GNSS are replaced with None.
             [x, y, psi, v, None, None, None, None, None, None]
         """
-        return self._eval_gnss2rwcp_E(gnss_measurement, states_E)
+
+        if gnss_measurements.ndim == 1:
+            gnss_measurements = gnss_measurements[np.newaxis, :]
+        if states_E.ndim == 1:
+            states_E = states_E[np.newaxis, :]
+
+        states_gnss_E = np.array(self._eval_gnss2rwcp_E(gnss_measurements.T, states_E.T)).T
+
+        states_gnss_E = np.c_[states_gnss_E, np.full((states_gnss_E.shape[0], 6), np.nan)]
+
+        if states_gnss_E.shape[0] == 1:
+            states_gnss_E = states_gnss_E.flatten()
+        return states_gnss_E
 
 
     def transform_gnss2stateN(self, gnss_measurement, states_N):
@@ -1387,7 +1435,7 @@ class InstrumentedBikeGeometry:
 
         states_E = self.transform_statesN2statesE(states_N)
 
-        states_gnss_E = self._eval_gnss2rwcp_E(gnss_measurement, states_E)
+        states_gnss_E = self.transform_gnss2stateE(gnss_measurement, states_E)
 
         states_gnss_N = self.transform_statesE2statesN(states_gnss_E)
 
@@ -1456,11 +1504,18 @@ class InstrumentedBikeGeometry:
         states_N = states_E.copy()
 
         # flip y, psi, psidot, delta and deltadot
-        states_N[1] *= -1
-        states_N[2] *= -1
-        states_N[5] *= -1
-        states_N[6] *= -1
-        states_N[8] *= -1
+        if states_N.ndim > 1:
+            states_N[:,1] *= -1
+            states_N[:,2] *= -1
+            states_N[:,5] *= -1
+            states_N[:,6] *= -1
+            states_N[:,8] *= -1
+        else:
+            states_N[1] *= -1
+            states_N[2] *= -1
+            states_N[5] *= -1
+            states_N[6] *= -1
+            states_N[8] *= -1
 
         return states_N
     
@@ -1485,7 +1540,7 @@ class InstrumentedBikeGeometry:
         return self.transform_statesE2statesN(states_N)
 
     
-    def transform_can2E(self, can_measurements, states_E):
+    def transform_can2stateE(self, can_measurements, states_E):
         """Transform the sensor measurements from the CAN bus 
         to bicycle states in the E-frame.
 
@@ -1510,14 +1565,25 @@ class InstrumentedBikeGeometry:
         -------
         states_can_E : array-like
             The list of bicycle states in the E frame derived from the can measurements. States 
-            that do not have a corresponding measurement on the CAN bus are replaced with None.
-            [None, None, psi, v, phi, delta, psidot, phidot, deltadot, a]
+            that do not have a corresponding measurement on the CAN bus are replaced with NaN.
+            [NaN, NaN, psi, v, phi, delta, psidot, phidot, deltadot, a]
         """
+        if can_measurements.ndim == 1:
+            can_measurements = can_measurements[np.newaxis, :]
+        if states_E.ndim == 1:
+            states_E = states_E[np.newaxis, :]
 
-        return self._eval_can2E(can_measurements, states_E)
+        states_can_E = np.array(self._eval_can2E(can_measurements.T, states_E.T)).T
+
+        states_can_E = np.c_[np.full((states_can_E.shape[0], 2), np.nan), states_can_E]
+
+        if states_can_E.shape[0] == 1:
+            states_can_E = states_can_E.flatten()
+
+        return states_can_E
     
 
-    def transform_can2N(self, can_measurements, states_N):
+    def transform_can2stateN(self, can_measurements, states_N):
         """Transform the sensor measurements from the CAN bus 
         to bicycle states in the N-frame.
 
@@ -1541,17 +1607,21 @@ class InstrumentedBikeGeometry:
         Returns
         -------
         states_can_N : array-like
-            The list of bicycle states in the E frame derived from the can measurements. States 
+            The list of bicycle states in the N frame derived from the can measurements. States 
             that do not have a corresponding measurement on the CAN bus are replaced with None.
             [None, None, psi, v, phi, delta, psidot, phidot, deltadot, a]
         """
         
         states_E = self.transform_statesN2statesE(states_N)
 
-        return self._eval_can2E(can_measurements, states_E)
+        states_can_E = self.transform_can2stateE(can_measurements, states_E)
+
+        states_can_N = self.transform_statesN2statesE(states_can_E)
+
+        return states_can_N
     
     
-    def transform_E2can(self, states_E):
+    def transform_stateE2can(self, states_E):
         """Transform bicycle states in the E-frame to sensor measurements
         on the can bus. This returns what the CAN sensors would measure 
         if the state was states_E. 
@@ -1576,7 +1646,7 @@ class InstrumentedBikeGeometry:
         return self._eval_E2can(states_E)
     
     
-    def transform_N2can(self, states_N):
+    def transform_stateN2can(self, states_N):
         """Transform bicycle states in the E-frame to sensor measurements
         on the can bus. This returns what the CAN sensors would measure 
         if the state was states_E. Used as measurement model in UKF.update().
