@@ -186,28 +186,32 @@ def get_default_filter_settings():
     filter_settings = {"integration_method": "midpoint",
                        "bicycle_parameter_dict": balanceassistv1_with_averagerider}
     
-    sensor_std = {"IMU": {"roll":float(np.deg2rad(20)), # datasheet values
-                           "yaw": float(np.deg2rad(3.5)),
+    sensor_std = {"gnss": {"var_inflation_factor": 10},
+                   "IMU": {"roll":float(np.deg2rad(30)),  # little confidence and potential frame misalignment -> inflate
+                           "yaw": float(np.deg2rad(3.5)), # datasheet values
                            "gyro": float(np.deg2rad(3.1)),
                            "accel": 1.5},   # inflated, true data seems more noisy then datasheet suggests
                    "speedometer": {"v": 0.05},  #guess
-                   "steerencoder": {"rate": float(np.deg2rad(0.5)), "angle": float(np.deg2rad(1))}}  #guess    
+                   "steerencoder": {"rate": float(np.deg2rad(0.5)), "angle": float(np.deg2rad(1))}}  #guess   
+     
         
-    filter_settings['R'] = make_R(sensor_std)  
-
+    #filter_settings['R'] = make_R(sensor_std)  
      
     process_std = {"x": 1e-6, "y": 1e-6,                # no additional uncertainty in position dynamics
                    "psi": float(np.deg2rad(1)),         # moderate uncertainties to account for model simplifications
                    "phi": float(np.deg2rad(1)),
                    "delta":float(np.deg2rad(2)),    
                    "dpsi": float(np.deg2rad(10)),       # large uncertainties in rates due to zero roll/steer torque assumption
-                   "dphi": float(np.deg2rad(15)), 
+                   "dphi": float(np.deg2rad(3)), 
                    "ddelta": float(np.deg2rad(20)),
                    "v": 0.5,                            # large uncertainties in speed and acceleration due to const. accel. assumption                              
                    "dv": 1,
-                   "ang_bias": float(np.deg2rad(0.2))} # small -> roll/steer bias should converge to const.
+                   "ang_bias": float(np.deg2rad(0.01))} # small -> roll/steer bias should converge to const.
     
-    filter_settings['Q'] = make_Q(process_std)   
+    #filter_settings['Q'] = make_Q(process_std)   
+
+    filter_settings['process_std'] = process_std
+    filter_settings['sensor_std'] = sensor_std
 
     return filter_settings
 
@@ -336,7 +340,7 @@ def move_dynamic(x, t_s, bp_model, integration_method='euler'):
         #pack
         x_pred = [p_x_pred, p_y_pred, x_lat_pred[4], v_pred, 
                   x_lat_pred[0], x_lat_pred[1], dpsi_pred,
-                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_psi_imu, b_phi, b_delta]
+                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_psi_imu, b_delta]
         
     elif integration_method == 'midpoint':
         
@@ -459,6 +463,7 @@ def filter_dynamic(measurements, uncertainties_gnss,
         Filtered (or smoothed) measurements (N, 10)
 
     """
+
     if bicycle_geometry is None:
         bicycle_geometry = InstrumentedBikeGeometry()
 
@@ -509,6 +514,7 @@ def filter_dynamic(measurements, uncertainties_gnss,
 
         states_E_can = np.zeros(10)
         states_E_can[2] = np.arctan2(m_i[3], m_i[2])
+        states_E_can[4] = m_i[4]
         states_N_can = bicycle_geometry.transform_statesE2statesN(states_E_can)
 
         states_N_can = bicycle_geometry.transform_can2statesN(m_i[4:], states_N_can)
@@ -531,11 +537,12 @@ def filter_dynamic(measurements, uncertainties_gnss,
     P0 = np.zeros((x0.size, x0.size), dtype=float)
     P0[:2,:2] = [[uncertainties_gnss[0,0], uncertainties_gnss[0,4]],
                  [uncertainties_gnss[0,4], uncertainties_gnss[0,1]]]
-    P0[2,2] = (3*np.pi)**2
+    
     P0[2:10, 2:10] = R[4:12, 4:12]
+    P0[4,4] = np.deg2rad(3.5)**2         # should be small although confidence in sensor is not big. Otherwise, filter will jump till first GNSS.
+    P0[5,5] = np.deg2rad(30)**2
 
-    #P0[[4,5],[4,5]] *= 3             # inflate var for steer/roll: could be any valid angle due to bias
-    P0[[10,11], [10,11]] = (3*np.pi)**2  # inflate var for yaw/steer/roll bias: could be any valid angle 
+    P0[[10,11], [10,11]] = (3*np.pi)**2  # inflate var for yaw/steer bias: could be any valid angle 
 
 
     # setup bicycle parameters

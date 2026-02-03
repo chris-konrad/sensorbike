@@ -35,7 +35,7 @@ from trajdatamanager.gnss import RTKLibGNSSManager, RTKLibGNSSTrack
 from trajdatamanager.utils import to_finite
 
 # local imports
-from sensorbike.ukf import filter_dynamic, get_default_filter_settings
+from sensorbike.ukf import filter_dynamic, get_default_filter_settings, make_Q, make_R
 from sensorbike.canbus import process_can, decode_parquet, verify_filepath_dbc, list_decoded_canlogs
 from sensorbike.geometry import InstrumentedBikeGeometry
 
@@ -707,8 +707,9 @@ class InstrumentedBicycleData():
                 msg = (f"Filter settings must provide '{sname}'!")
                 raise KeyError(msg)
         
-        R = _parse_settings('R')
-        Q = _parse_settings('Q')
+        R = make_R(_parse_settings('sensor_std'))
+        Q = make_Q(_parse_settings('process_std'))
+        
         int_method = _parse_settings('integration_method')
         bparams = _parse_settings('bicycle_parameter_dict')
         
@@ -718,7 +719,7 @@ class InstrumentedBicycleData():
 
         uncertainties_track_gnss = ["varx_gnss", "vary_gnss", "varvx_gnss", "varvy_gnss", "covxy_gnss", "covvxvy_gnss"] 
         idx_gnss_uncert = [self.trk_raw.data_feature_keys.index(k) for k in uncertainties_track_gnss]
-        uncertainties_gnss = self.trk_raw.data[:,idx_gnss_uncert]
+        uncertainties_gnss = self.filter_settings['sensor_std']['gnss']['var_inflation_factor'] * self.trk_raw.data[:,idx_gnss_uncert]
 
         features_track_can = ["delta_can", "ddelta_can", "phi_can", "gyrox_can", "psi_can", "gyroz_can", "vrws_can", "ax_can"]
         idx_can = [self.trk_raw.data_feature_keys.index(k) for k in features_track_can]
