@@ -37,6 +37,7 @@ from trajdatamanager.utils import to_finite
 # local imports
 from sensorbike.ukf import filter_dynamic, get_default_filter_settings
 from sensorbike.canbus import process_can, decode_parquet, verify_filepath_dbc, list_decoded_canlogs
+from sensorbike.geometry import InstrumentedBikeGeometry
 
 class InstrumentedBicycleData():
     """
@@ -486,6 +487,8 @@ class InstrumentedBicycleData():
         if plot_results:
             trk_gnss.plot_xy(ax=ax, color="gray")
 
+        trk_gnss.plot_uncertainties()
+
         return trk_gnss
     
     
@@ -593,14 +596,14 @@ class InstrumentedBicycleData():
             states_E = np.empty((can_measurements.shape[0], 10))
             states_E[:,4] = can_measurements[:,2]
 
-            states_can_transformed = self.bike_geom.transform_can2stateE(can_measurements, states_E)
-            states_gnss_transformed = self.bike_geom.transform_gnss2stateE(gnss_measurements, states_can_transformed)
+            states_can_transformed = self.bike_geom.transform_can2statesE(can_measurements, states_E)
+            states_gnss_transformed = self.bike_geom.transform_gnss2statesE(gnss_measurements, states_can_transformed)
         elif reference_frame == 'N':
             states_N = np.empty((can_measurements.shape[0], 10))
             states_N[:,4] = - can_measurements[:,2]
 
-            states_can_transformed = self.bike_geom.transform_can2stateN(can_measurements, states_N)
-            states_gnss_transformed = self.bike_geom.transform_gnss2stateN(gnss_measurements, states_can_transformed)            
+            states_can_transformed = self.bike_geom.transform_can2statesN(can_measurements, states_N)
+            states_gnss_transformed = self.bike_geom.transform_gnss2statesN(gnss_measurements, states_can_transformed)            
 
         # extract existing
         states_can_transformed = states_can_transformed[:,2:]
@@ -709,25 +712,24 @@ class InstrumentedBicycleData():
         int_method = _parse_settings('integration_method')
         bparams = _parse_settings('bicycle_parameter_dict')
         
-        features_track_gnss = ["x_gnss", "y_gnss", "psi_gnss", "v_gnss"]
+        features_track_gnss = ["x_gnss", "y_gnss", "vx_gnss", "vy_gnss"]
         idx_gnss = [self.trk_raw.data_feature_keys.index(k) for k in features_track_gnss]
         measurements_gnss = self.trk_raw.data[:,idx_gnss]
 
-        uncertainties_track_gnss = ["varx_gnss", "vary_gnss", "varpsi_gnss", "varv_gnss", "covxy_gnss"] 
+        uncertainties_track_gnss = ["varx_gnss", "vary_gnss", "varvx_gnss", "varvy_gnss", "covxy_gnss", "covvxvy_gnss"] 
         idx_gnss_uncert = [self.trk_raw.data_feature_keys.index(k) for k in uncertainties_track_gnss]
         uncertainties_gnss = self.trk_raw.data[:,idx_gnss_uncert]
 
         features_track_can = ["delta_can", "ddelta_can", "phi_can", "gyrox_can", "psi_can", "gyroz_can", "vrws_can", "ax_can"]
         idx_can = [self.trk_raw.data_feature_keys.index(k) for k in features_track_can]
-        measurements_can = self.trk_raw.data[:,idx_gnss]
+        measurements_can = self.trk_raw.data[:,idx_can]
 
-        measurements_gnss[:,4] = to_continous_angle(measurements_gnss[:,4])
-        measurements_can[:,4] = to_continous_angle(measurements_can[:,4])
+        #measurements_gnss[:,2] = to_continous_angle(measurements_gnss[:,2])
+        #measurements_can[:,4] = to_continous_angle(measurements_can[:,4])
 
-        
-        data_filtered, steer_angle_bias = filter_dynamic(measurements_gnss, 
-                                                         uncertainties_gnss, 
-                                                         measurements_can,
+        measurements = np.c_[measurements_gnss, measurements_can]
+
+        data_filtered, steer_angle_bias = filter_dynamic(measurements, uncertainties_gnss, 
                                                          R, Q, 
                                                          integration_method=int_method,
                                                          bicycle_parameter_dict=bparams,
@@ -750,20 +752,20 @@ class InstrumentedBicycleData():
             data_filtered[:,i] = data_dict_filt[k]
     
         
-        self.trk_filtered = Track(f"Filtered states (E-frame): {self.name}", 0, self.trk.t, 
+        self.trk_filtered = Track(f"Filtered states (E-frame): {self.name}", 0, self.trk_raw.t, 
                                   data_filtered, data_feature_keys=keys_out,
-                                  metadata = self.trk.metadata, 
+                                  metadata = self.trk_raw.metadata, 
                                   yaw_feature_index=2)
         
         if verbose:
             print("done!")
             
-        if plot_data:
-            if verbose:
-                print("Plotting data ...", end="")
-                axes_t, axes_xy = self.plot_data(self.trk)
-            if verbose:
-                print("done!")
+        #if plot_data:
+            #if verbose:
+            #    print("Plotting data ...", end="")
+            #    axes_t, axes_xy = self.plot_data(self.trk)
+            #if verbose:
+            #    print("done!")
     
         return self.trk_filtered
     
@@ -841,33 +843,33 @@ class InstrumentedBicycleData():
         
         plot_kwargs = self.lineplot_kwargs
         
-        fig_t, axes_t = plt.subplots(12,1, sharex=True, layout='constrained')
+        fig_t, axes_t = plt.subplots(14,1, sharex=True, layout='constrained')
             
         #gnss
         axes_t[0].set_title('RTK GNSS (SwiftNav Piki Multi)')
-        feat_gnss = ['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss']
-        self.trk_raw.plot(features=feat_gnss, axes = axes_t[0:4],
+        feat_gnss = ['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss', 'vx_gnss', 'vy_gnss'] 
+        self.trk_raw.plot(features=feat_gnss, axes = axes_t[0:6],
                         plot_over_timestamps=True, 
                         color=self.colors['gnss'], **plot_kwargs)
         
         #imu
-        axes_t[4].set_title('Onboard IMU (BNO086)')
+        axes_t[6].set_title('Onboard IMU (BNO086)')
         feat_imu = ['psi_can', 'gyroz_can', 'phi_can', 'gyrox_can', 'ax_can']
-        self.trk_raw.plot(features=feat_imu, axes = axes_t[4:9],
+        self.trk_raw.plot(features=feat_imu, axes = axes_t[6:11],
                 plot_over_timestamps=True, 
                 color=self.colors['imu'], **plot_kwargs)
         
         #steer encoder
         axes_t[9].set_title('Steer Encoder')
         feat_enc = ['delta_can', 'ddelta_can']
-        self.trk_raw.plot(features=feat_enc, axes = axes_t[9:11],
+        self.trk_raw.plot(features=feat_enc, axes = axes_t[11:13],
                 plot_over_timestamps=True, 
                 color=self.colors['steer_encoder'], **plot_kwargs)
 
         #wheelspeed sensor
         axes_t[11].set_title('Wheelspeed sensor (rear)')
         feat_wsp = ['vrws_can',]
-        self.trk_raw.plot(features=feat_wsp, axes = [axes_t[11]],
+        self.trk_raw.plot(features=feat_wsp, axes = [axes_t[13]],
                         plot_over_timestamps=True, 
                         color=self.colors['wheelspeed'], **plot_kwargs)
             

@@ -20,6 +20,7 @@ import warnings
 from filterpy.kalman import UnscentedKalmanFilter, MerweScaledSigmaPoints
 
 from sensorbike.params.balanceassist_bikeparams import balanceassistv1_with_averagerider
+from sensorbike.geometry import InstrumentedBikeGeometry
 from bicycleparameters.parameter_sets import Meijaard2007ParameterSet
 from bicycleparameters.models import Meijaard2007Model
 
@@ -84,10 +85,10 @@ def get_statespace_matrices(bp_model, v):
     return A, B, C, D
 
 
-def make_Rscale_from_sensorchar(sensor_characteristics):
+def make_R(sensor_characteristics):
     """
-    Creates the measurement noise scale array from a nested dict containting 
-    the standard errors of each measurement sorted by sensor.
+    Creates the constant part of the measurement noise matrix R from a nested dict 
+    containting the standard errors of each measurement sorted by sensor.
     
     The dict must be structured:
         IMU: 
@@ -100,7 +101,9 @@ def make_Rscale_from_sensorchar(sensor_characteristics):
         steerencoder:
             rate: sigma_rate
             angle: sigma_angle
-            
+    
+    The GNSS is omitted/ignored. Instead, we later plug in dynamic uncertainty estimates.
+
     Designed for easy parsing of yaml config files. 
     
     Parameters
@@ -110,34 +113,31 @@ def make_Rscale_from_sensorchar(sensor_characteristics):
 
     Returns
     -------
-    measurement_noise_std : array
-        Array of measurement noise standard errors.
+    R : array
+        Array (12x12) of static measurement variances. 
     """
+
+    R = np.zeros((12,12), dtype=float)
+
+    # steer encoder
+    R[4,4] = sensor_characteristics['steerencoder']['angle']**2
+    R[5,5] = sensor_characteristics['steerencoder']['rate']**2
+
+    # imu
+    R[6,6] = sensor_characteristics['IMU']['roll']**2
+    R[7,7] = sensor_characteristics['IMU']['gyro']**2
+    R[8,8] = sensor_characteristics['IMU']['yaw']**2
+    R[9,9] = sensor_characteristics['IMU']['gyro']**2
+    R[11,11] = sensor_characteristics['IMU']['accel']**2
+
+    #wheelspeed sensor
+    R[10,10] = sensor_characteristics['speedometer']['v']**2
     
-    #sensor_characteristics
-    meas = sensor_characteristics
+    return R
     
-    # OTHER
-    std_psi_imu = meas['IMU']['yaw']
-    std_phi = meas['IMU']['roll']
-    std_delta = meas['steerencoder']['angle']
-    std_dpsi = meas['IMU']['gyro']
-    std_dphi = meas['IMU']['gyro']
-    std_ddelta = meas['steerencoder']['rate']
-    std_v = meas['speedometer']['v']
-    std_dv = meas['IMU']['accel']
-    
-    measurement_noise_std = np.array([0, 0, 
-                                    std_psi_imu,    # will be overwritten if GNSS present.
-                                    std_v, std_phi, std_delta, 
-                                    std_dpsi, std_dphi, std_ddelta, 
-                                    std_dv])  
-    
-    return measurement_noise_std
-    
-def make_Qscale_from_dict(process_noise_dict):
+def make_Q(process_noise_dict):
     """
-    Creates the process noise scale array from a dict containting the 
+    Creates the process noise matrix Q from a dict containting the 
     standard errors of each state.
     
     Must contain x, y, psi, v, dv, phi, dphi, psi, dpsi, delta, and ddelta.
@@ -160,9 +160,11 @@ def make_Qscale_from_dict(process_noise_dict):
                                     prcs['v'], prcs['phi'], prcs['delta'],
                                     prcs['dpsi'], prcs['dphi'], 
                                     prcs['ddelta'], prcs['dv'], 
-                                    prcs['ang_bias'], prcs['ang_bias'], prcs['ang_bias']])
+                                    prcs['ang_bias'], prcs['ang_bias']])
     
-    return process_noise_std
+    Q = np.diag(process_noise_std**2)
+    
+    return Q
 
 
 def get_default_filter_settings():
@@ -184,15 +186,14 @@ def get_default_filter_settings():
     filter_settings = {"integration_method": "midpoint",
                        "bicycle_parameter_dict": balanceassistv1_with_averagerider}
     
-    sensor_std = {"IMU": {"roll":float(np.deg2rad(3.5)), # datasheet values
+    sensor_std = {"IMU": {"roll":float(np.deg2rad(20)), # datasheet values
                            "yaw": float(np.deg2rad(3.5)),
                            "gyro": float(np.deg2rad(3.1)),
                            "accel": 1.5},   # inflated, true data seems more noisy then datasheet suggests
                    "speedometer": {"v": 0.05},  #guess
                    "steerencoder": {"rate": float(np.deg2rad(0.5)), "angle": float(np.deg2rad(1))}}  #guess    
         
-    filter_settings['measurement_noise_std'] = \
-        make_Rscale_from_sensorchar(sensor_std)  
+    filter_settings['R'] = make_R(sensor_std)  
 
      
     process_std = {"x": 1e-6, "y": 1e-6,                # no additional uncertainty in position dynamics
@@ -204,10 +205,9 @@ def get_default_filter_settings():
                    "ddelta": float(np.deg2rad(20)),
                    "v": 0.5,                            # large uncertainties in speed and acceleration due to const. accel. assumption                              
                    "dv": 1,
-                   "ang_bias": float(np.deg2rad(0.05))} # small -> roll/steer bias should converge to const.
+                   "ang_bias": float(np.deg2rad(0.2))} # small -> roll/steer bias should converge to const.
     
-    filter_settings['process_noise_std'] = \
-        make_Qscale_from_dict(process_std)   
+    filter_settings['Q'] = make_Q(process_std)   
 
     return filter_settings
 
@@ -221,9 +221,6 @@ def parse_filter_settings(filter_settings_yaml_dict,
     The yaml must be structured:
         integration_method: "midpoint" or "backward euler"
         measurement_noise_std:
-            GNSS:
-                x: sigma_x
-                y: sigma_y
             IMU: 
                 roll: sigma_roll
                 yaw: sigma_yaw
@@ -260,8 +257,7 @@ def parse_filter_settings(filter_settings_yaml_dict,
     -------
     filter_settings : dict.
     """
-    
-    
+
     if bicycle_parameter_dict is None:
         bicycle_parameter_dict = balanceassistv1_with_averagerider
     
@@ -269,13 +265,8 @@ def parse_filter_settings(filter_settings_yaml_dict,
                            filter_settings_yaml_dict["integration_method"],
                        "bicycle_parameter_dict": bicycle_parameter_dict}
         
-    filter_settings['measurement_noise_std'] = \
-        make_Rscale_from_sensorchar(
-            filter_settings_yaml_dict["measurement_noise_std"])
-    
-    filter_settings['process_noise_std'] = \
-        make_Qscale_from_dict(
-            filter_settings_yaml_dict['process_noise_std'])
+    filter_settings['R'] = make_R(filter_settings_yaml_dict["measurement_noise_std"])
+    filter_settings['Q'] = make_Q(filter_settings_yaml_dict['process_noise_std'])
         
     return filter_settings
     
@@ -320,8 +311,8 @@ def move_dynamic(x, t_s, bp_model, integration_method='euler'):
     ddelta = x[8]
     dv = x[9]
     b_psi_imu = x[10]
-    b_phi = x[11]
-    b_delta = x[12]
+    #b_phi = x[11]
+    b_delta = x[11]
     
     #bicycle lateral dynamics
     x_lat = np.array([phi, delta, dphi, ddelta, psi])
@@ -372,126 +363,48 @@ def move_dynamic(x, t_s, bp_model, integration_method='euler'):
         
         x_pred = [p_x_pred, p_y_pred, x_lat_pred[4], v_pred, 
                   x_lat_pred[0], x_lat_pred[1], dpsi_pred,
-                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_psi_imu, b_phi, b_delta]
+                  x_lat_pred[2], x_lat_pred[3], dv_pred, b_psi_imu, b_delta]
         
     else:
         raise ValueError("Unknown integration method!")
     
     return x_pred
 
-def move_kinematic(x, t_s, dv=None, dpsi = None):
-    """
-    Kinematic constant acceleration and yaw rate model.
-    
-    The state vector is [p_x, p_y, psi, dpsi, v].
 
-    Parameters
-    ----------
-    x : array-like
-        Current state vector.
-    t_s : float
-        Time step.
-    dv : float (optional)
-        Acceleration input
-    dpsi : float (optional)
-        Yaw rate input
-        
-    Returns
-    -------
-    x_pred : array-like
-        Predicted state vector.
-    """
+def measure_dynamic(x, bicycle_geometry):
+    """ Apply the measurement model to the current state estimate.
     
-    #extract for readibility
-    p_x = x[0]
-    p_y = x[1]
-    psi = x[2]
-    v = x[4]
-    
-    if dv is None:
-        dv = x[5]
-    if dpsi is None:
-        dpsi = x[3]
-    
-    #predict
-    p_x_pred = v * np.cos(psi) * t_s + p_x
-    p_y_pred = v * np.sin(psi) * t_s + p_y
-             
-    psi_pred = dpsi * t_s + psi
-    dpsi_pred = dpsi 
-
-    v_pred = dv * t_s + v
-    
-    dv_pred = dv 
-    
-    #pack
-    x_pred = [p_x_pred, p_y_pred, psi_pred, dpsi_pred, v_pred, dv_pred]
-    x_pred = [float(x_i) for x_i in x_pred]
-    
-    return x_pred
-
-def measure_dynamic(x, use_psi_gnss):
-    """
-    Extract the measured states of the dynamic whipple-carvallo model.These are
-    - p_x: Measured by GNSS
-    - p_y: Measured by GNSS
-    - psi: Derived from GNSS x and y
-    - dpsi: Yaw rate from IMU
-    - v: speed from IMU
-    - dv: acceleration from IMU
-    - delta: steer angle from the steer encoder, often biased due to inaccurate calibration
-    - ddelta: steer rate from the steer encoder
-    - phi: roll angle from the IMU, may be biased due to inaccurate magnetometer
-    - dphi: roll rate from the IMU
-    
-    The state vector is [p_x, p_y, psi, v, phi, delta, dpsi, dphi, ddelta, dv].
+    The state vector is [x, y, psi, v, phi, delta, dpsi, dphi, ddelta, dv].
 
     Parameters
     ----------
     x : array-like
         State vector.
+
+    Returns
+    -------
+    measurement : array
+        Measrurement 
     """
+
+    meas_gnss = bicycle_geometry.transform_statesN2gnss(x[:10])
+    meas_can = bicycle_geometry.transform_statesN2can(x[:10])
     
-    C = np.eye(10)
-    C = np.c_[C, np.zeros((10, 3))]
+    #add biases 
+    meas_can[0] += x[11]    # delta
+    #meas_can[2] += x[11]    # phi
+    meas_can[4] += x[10]    # psi
 
-    #model bias in phi/delta measurement, e.g.: phi_meas = phi_true + bias_phi + noise
-    C[4,11] = 1
-    C[5,12] = 1
-
-    # model bias in IMU psi only if no GNSS isavailable.
-    if not use_psi_gnss:
-        C[2,10] = 1
-
-    return (C @ x).flatten()
-
-def measure_kinematic(x, gnss_available):
-    """
-    Extract the measured states. These are
-    - p_x: Measured by GNSS
-    - p_y: Measured by GNSS
-    - psi: Derived from GNSS p_x and p_y
-    - dpsi: Yaw rate from IMU
-    - v: speed from IMU
-    - dv: acceleration from IMU
-
-    Parameters
-    ----------
-    x : array-like
-        State vector [p_x, p_y, psi, dpsi, v].
-    gnss_available : bool 
-        Flag indicating if GNSS is available at the current time step. 
-
-    """
-    C = np.eye(6)
-    if not gnss_available:
-        C[:3,:3] = np.zeros(3)
-    return (C @ x).flatten()
+    return np.r_[meas_gnss, meas_can]
 
 
-def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, plot = True, 
+def filter_dynamic(measurements, uncertainties_gnss, 
+                   R, Q,
+                   t_s=0.01, smooth = True, plot = True, 
                    integration_method = "backward euler", 
-                   bicycle_parameter_dict=None):
+                   bicycle_parameter_dict=None, 
+                   bicycle_geometry=None,
+                   color_filtered='#'):
     """
     Filter instrumented bicycle measurements from different sensors using
     an Unscented Kalman Filter.
@@ -546,64 +459,88 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
         Filtered (or smoothed) measurements (N, 10)
 
     """
-    
+    if bicycle_geometry is None:
+        bicycle_geometry = InstrumentedBikeGeometry()
 
     state_labels = ['p_x', 'p_y', 'psi', 'v', 'phi', 'delta', 'dpsi', 'dphi', 
-                    'ddelta', 'dv', 'b_psi_imu', 'b_phi', 'b_delta']
+                    'ddelta', 'dv', 'b_psi_imu', 'b_delta_enc'] #'b_phi_imu', 
     n_states = len(state_labels)
     n_samples = measurements.shape[0]-1
     n_measurements = n_states
 
-    #make a time vector
+    # make a time vector
     t = np.arange(0, n_samples+1) * t_s
 
-    # construct measurement noise matrix
-    def get_measurement(i):
-        #new measurements and uncertainties
-        m_i = measurements[i,:].copy()
-        R_i = R.copy()
+    # R update function
+    var_vwsp = R[10,10].copy()
+    var_psiimu = R[8,8].copy()
 
-        # check gnss availability
-        meas_unavilable = np.argwhere(np.logical_not(np.isfinite(m_i))).flatten()
-        
-        # if x/y is available from gnss, take RTKLib covariance estimates. else, set unreliable
-        if not (0 in meas_unavilable or 1 in meas_unavilable):
-            R_i[:2,:2] = [[uncertainties[i,0], uncertainties[i,2]],
-                          [uncertainties[i,2], uncertainties[i,1]]]
+    def update_R(i, R):
+        """Update the measurement variance matrix according to GNSS availablility at
+        time step i.
+        """
+
+        # check availability
+        pos_gnss_available = np.all(np.isfinite(measurements[i,0:2]))
+        vel_gnss_available = np.all(np.isfinite(measurements[i,2:4]))
+
+        # if gnss position is available plug in RTKLib covariance estimates. Else, make unreliable
+        if pos_gnss_available:
+            R[:2,:2] = [[uncertainties_gnss[i,0], uncertainties_gnss[i,4]],
+                        [uncertainties_gnss[i,4], uncertainties_gnss[i,1]]]
         else:
-            m_i[0] = 0
-            m_i[1] = 0
-            R_i[0,0] = 1e10
-            R_i[1,1] = 1e10
-            
-        # if psi is available from gnss, take psi_gnss, overwrite with RTKlib uncertainty and delete psi_imu
-        use_psi_gnss = not (2 in meas_unavilable)
-        if use_psi_gnss:
-            m_i = np.delete(m_i, 3)
-            R_i[2,2] = uncertainties[i,3]
+            R[:2,:2] = 1e10 * np.eye(2)
+
+        # if gnss velocity is available plug in RTKLib variance estimates and make wheelspeed/imu orientation unreliable. 
+        if vel_gnss_available:
+            R[2:4,2:4] = [[uncertainties_gnss[i,2], uncertainties_gnss[i,5]],
+                          [uncertainties_gnss[i,5], uncertainties_gnss[i,3]]]
         else: 
-            m_i = np.delete(m_i, 2)
+            R[2:4,2:4] = 1e10 * np.eye(2)      
+            R[8,8] = var_psiimu
+            R[10,10] = var_vwsp
+        
+        return R
 
-        R_i[~np.isfinite(R_i)] = 1e10
 
-        return m_i, R_i, use_psi_gnss
+    def transform_measurement2state(m_i):
+        """Build a state vector from measurements. Select GNSS orientation over CAN and 
+        wheelspeed over GNSS speed."""
 
-    
-    # intial conditions
-    x0, P0_meas, use_psi_gnss = get_measurement(0)    # first state measurement is initial guess
-    x0 = np.r_[x0, [0, 0, 0]]              # add steer and roll angle bias      
-    P0 = np.zeros((x0.size, x0.size))   
-    P0[:10, :10] = P0_meas              # first measurement uncertainty is initial covariance
-    P0[[4,5],[4,5]] = np.pi**2          # inflate cov for steer/roll: could be any valid angle due to bias
-    P0[[10,11,12], [10,11,12]] = np.pi**2     # inflate cov for yaw/steer/roll bias: could be any valid angle 
+        states_E_can = np.zeros(10)
+        states_E_can[2] = np.arctan2(m_i[3], m_i[2])
+        states_N_can = bicycle_geometry.transform_statesE2statesN(states_E_can)
 
-    if not use_psi_gnss:
-        P0[[2,2],[2,2]] = np.pi**2      # inflate cov for yaw only if not from gnss: could be any valid angle due to bias
-    
+        states_N_can = bicycle_geometry.transform_can2statesN(m_i[4:], states_N_can)
+
+        states_N_can[2] = - np.arctan2(m_i[3], m_i[2])
+        states_N_gnss = bicycle_geometry.transform_gnss2statesN(m_i[:4], states_N_can)
+
+        states_N = np.r_[states_N_gnss[:3], states_N_can[3:]]
+        meas_gnss = bicycle_geometry.transform_statesN2gnss(states_N)
+
+        #states_N = np.r_[states_N_gnss[:2], states_N_can[2:]]
+        #meas_can = bicycle_geometry.transform_statesN2can(states_N)
+
+        return states_N
+
+    # intial state from first measurement
+    x0 = transform_measurement2state(measurements[0,:])
+    x0 = np.r_[x0, [0, 0]]       # add yaw, roll, and steer angle bias      
+
+    P0 = np.zeros((x0.size, x0.size), dtype=float)
+    P0[:2,:2] = [[uncertainties_gnss[0,0], uncertainties_gnss[0,4]],
+                 [uncertainties_gnss[0,4], uncertainties_gnss[0,1]]]
+    P0[2,2] = (3*np.pi)**2
+    P0[2:10, 2:10] = R[4:12, 4:12]
+
+    #P0[[4,5],[4,5]] *= 3             # inflate var for steer/roll: could be any valid angle due to bias
+    P0[[10,11], [10,11]] = (3*np.pi)**2  # inflate var for yaw/steer/roll bias: could be any valid angle 
+
+
     # setup bicycle parameters
     if bicycle_parameter_dict is None:
         bicycle_parameter_dict = balanceassistv1_with_averagerider
-        
     bp_param = Meijaard2007ParameterSet(bicycle_parameter_dict, True)
     bp_model = Meijaard2007Model(bp_param)
 
@@ -620,9 +557,7 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
     
     ukf.x = x0
     ukf.P = P0
-    ukf.R = R
     ukf.Q = Q
-    
     
     states_filtered = np.zeros((n_samples+1, n_states))
     states_filtered[0,:] = x0
@@ -630,19 +565,28 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
     covs_filtered = np.zeros((n_samples+1, ukf.P.shape[0], ukf.P.shape[1]))
     covs_filtered[0,:,:] = ukf.P
 
+    state_measurements = []
+
     # filter measurements 
     for i in range(n_samples):
         #predict
         ukf.predict()
 
         # update
-        m_i, R_i, use_psi_gnss = get_measurement(i+1)
-        ukf.update(m_i, R=R_i, use_psi_gnss=use_psi_gnss)
+        m = measurements[i+1,:].copy()
+        m[~np.isfinite(m)] = 0
+
+        R = update_R(i+1, R)
+
+        ukf.update(m, R=R, bicycle_geometry=bicycle_geometry)
+
+        state_measurements.append(measure_dynamic(ukf.x, bicycle_geometry))
         
         states_filtered[i+1,:] = ukf.x
         covs_filtered[i+1,:,:] = ukf.P
 
     states_filtered = np.array(states_filtered)
+    state_measurements = np.array(state_measurements)
         
     # smooth filtered states using an Rauch-Tung-Striebel smoother. 
     if smooth:
@@ -652,165 +596,172 @@ def filter_dynamic(measurements, uncertainties, R, Q, t_s=0.01, smooth = True, p
         # never used smoothed speed. May be unreliable
         states_smoothed[:, 3] = states_filtered[:, 3]
     
-    #plot filter results
     if plot:
+        _plot_measurement_error(measurements, state_measurements)
+        plot_filter_result_xy(measurements, states_filtered, covs_filtered, bicycle_geometry, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
+        plot_filter_result_t(measurements, states_filtered, covs_filtered, bicycle_geometry, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
         
-        #x-y plot
-        fig0, ax0 = plt.subplots(1,1, layout='constrained')
-        ax0.set_aspect('equal')
-        finite = np.isfinite(measurements[:,1])
-        ax0.plot(measurements[:,0][finite], measurements[:,1][finite], color='blue', label='measured')
-
-        ax0.plot(states_filtered[:,0], states_filtered[:,1], color = 'orange', label='filtered')
-        ax0.plot(states_filtered[:,0] + covs_filtered[:,0,0], 
-                 states_filtered[:,1] + covs_filtered[:,1,1], color = 'orange', linestyle='--')
-        ax0.plot(states_filtered[:,0] - covs_filtered[:,0,0], 
-                 states_filtered[:,1] - covs_filtered[:,1,1], color = 'orange', linestyle='--')
-        if smooth:
-            ax0.plot(states_smoothed[:,0], states_smoothed[:,1], 
-                     color = 'green', label='smoothed')
-            ax0.plot(states_smoothed[:,0] + covs_smoothed[:,0,0], 
-                     states_smoothed[:,1] + covs_smoothed[:,1,1], color = 'green', linestyle='--')
-            ax0.plot(states_smoothed[:,0] - covs_smoothed[:,0,0], 
-                     states_smoothed[:,1] - covs_smoothed[:,1,1], color = 'green', linestyle='--')
-            
-        ax0.set_xlabel('x [m]')
-        ax0.set_ylabel('y [m]')
-        ax0.set_title('Filtered xy-trajectories')
-        ax0.legend()
-        
-        #time plot
-        off = 0
-        fig1, axes1 = plt.subplots(n_states, 1, sharex=True, layout='constrained')
-        for i in range(n_states):
-            minval = np.inf
-            maxval = -np.inf
-            
-            if i < n_states-3 and i!=3:
-                m = measurements[:,i]
-                finite = np.isfinite(m)
-                axes1[i-off].plot(t[finite], m[finite], color = 'blue', label = 'data')
-                minval = min(minval, np.min(m))
-                maxval = max(maxval, np.max(m))
-            elif i==3:  #plot psi_imu into psi plot as well.
-                m = measurements[:,i]
-                finite = np.isfinite(m)
-                axes1[i-1].plot(t[finite], m[finite] - states_smoothed[:,-3], color = 'gray', linestyle='dashed', label = 'data')
-                minval = min(minval, np.min(m))
-                maxval = max(maxval, np.max(m))
-                off = 1
-
-            axes1[i].plot(t, states_filtered[:,i], color = 'orange', label = 'filtered')
-            axes1[i].fill_between(t, states_filtered[:,i]+np.sqrt(covs_filtered[:,i,i]), 
-                                     states_filtered[:,i]-np.sqrt(covs_filtered[:,i,i]), alpha=0.2, color='orange')
-            minval = min(minval, np.min(states_filtered[:,i]))
-            maxval = max(maxval, np.max(states_filtered[:,i]))
-
-            if smooth and state_labels[i] != 'v':
-                axes1[i].plot(t, states_smoothed[:,i], 
-                              color = 'green', label = 'smoothed')
-                axes1[i].fill_between(t, states_smoothed[:,i]+np.sqrt(covs_smoothed[:,i,i]), 
-                                         states_smoothed[:,i]-np.sqrt(covs_smoothed[:,i,i]), alpha=0.2, color='green')
-                minval = min(minval, np.min(states_smoothed[:,i]))
-                maxval = max(maxval, np.max(states_smoothed[:,i]))
-
-            rng = maxval - minval
-            axes1[i].set_ylim(minval - 0.2 * rng, maxval + 0.2 * rng)
-            axes1[i].set_ylabel(state_labels[i])
-
-        axes1[0].legend()
-        axes1[-1].set_xlabel('t [s]')
-        axes1[0].set_title("Filtered Trajectories")
-        fig1.set_size_inches(10.5, 9)
-
-    # output 
     if smooth:
-        states_out = states_smoothed
+        return states_smoothed, covs_smoothed
     else:
-        states_out = states_filtered
+        return states_filtered, covs_filtered
     
-    biases_out = {k: states_out[:,state_labels.index(k)] for k in ['b_phi', 'b_delta']}
 
-    states_out = states_out[:,:-len(biases_out)]
+def _plot_measurement_error(measurements, state_measurements):
 
-    return states_out, biases_out
-        
+    features_track_gnss = ["x_gnss", "y_gnss", "vx_gnss", "vy_gnss"]
+    features_track_can = ["delta_can", "ddelta_can", "phi_can", "gyrox_can", "psi_can", "gyroz_can", "vrws_can", "ax_can"]
+    features = features_track_gnss + features_track_can
 
-def filter_kinematic(measurements, R, Q, t_s=0.01):
-    """ UNTESTED, PROBABLY DOESN'T WORK
+    t = np.arange(0, measurements.shape[0])
+
+    fig, axes = plt.subplots(measurements.shape[1], 1, sharex=True, layout='constrained')
+    for i in range(measurements.shape[1]):
+        fin = np.isfinite(measurements[:,i])
+        axes[i].plot(t[fin], measurements[fin,i])
+        axes[i].plot(state_measurements[:,i])
+        axes[i].set_ylabel(features[i])
+
+    axes[0].set_title("gnss measurements")
+    axes[len(features_track_gnss)].set_title("can measurements")
+
+def plot_filter_result_xy(measurements, 
+                         states_filtered, covs_filtered, bicycle_geometry,
+                         states_smoothed=None, covs_smoothed=None, 
+                         color_meas_gnss='#EC6842',
+                         color_state_gnss='#5C5C5C',
+                         color_filtered='#FFB81C', color_smoothed='#009B77', ax=None):
+    """Plot the filtered/smoothed states into an x/y plot.
     """
+
+    smooth = not(states_smoothed is None) and not(covs_smoothed is None)
+
+    plotstyle_filt = dict(linewidth=1)
+    plotstyle_cov = dict(linewidth=1, linestyle="--")
+    plotstyle_meas = dict(marker='.', markersize=2, linestyle='None')
+
+    #remove biases
+    #if smooth:
+    #    measurements[:, (4, 6, 8)] -= states_smoothed
+    meas_states_can = np.zeros((measurements.shape[0], 10), dtype=float)
+    meas_states_can[:,2] = measurements[:,8]
+    meas_states_can = bicycle_geometry.transform_can2statesN(measurements[:,4:], states_smoothed[:,:10])
+    meas_states_gnss = bicycle_geometry.transform_gnss2statesN(measurements[:,:4], states_smoothed[:,:10])
+
+    if ax is None:
+        fig, ax = plt.subplots(1,1, layout='constrained')
+        ax.set_aspect('equal')
+        ax.set_xlabel('x [m]')
+        ax.set_ylabel('y [m]')
+        ax.set_title("filtered and smoothed bicycle position")
+    else:
+        fig = ax.get_figure()
+
+    #x-y plot
+    fin_gnss = np.logical_and(np.isfinite(meas_states_gnss[:,0]), np.isfinite(meas_states_gnss[:,1]))
+    ax.plot(meas_states_gnss[fin_gnss,0], meas_states_gnss[fin_gnss,1], color= color_state_gnss, label = 'gnss (transf.)', **plotstyle_meas)
+    ax.plot(measurements[fin_gnss, 0], -measurements[fin_gnss, 1], color= color_meas_gnss, label = 'gnss (meas.)', **plotstyle_meas)
+
+    ax.plot(states_filtered[:,0], states_filtered[:,1], color = color_filtered, label='ukf', **plotstyle_filt)
+    ax.plot(states_filtered[:,0] + np.sqrt(covs_filtered[:,0,0]), 
+            states_filtered[:,1] + np.sqrt(covs_filtered[:,1,1]), color = color_filtered, **plotstyle_cov)
+    ax.plot(states_filtered[:,0] - np.sqrt(covs_filtered[:,0,0]), 
+            states_filtered[:,1] - np.sqrt(covs_filtered[:,1,1]), color = color_filtered, **plotstyle_cov)
+    if smooth:
+        ax.plot(states_smoothed[:,0], states_smoothed[:,1], color = color_smoothed, label='rts', **plotstyle_filt)
+        ax.plot(states_smoothed[:,0] + np.sqrt(covs_smoothed[:,0,0]), 
+                states_smoothed[:,1] + np.sqrt(covs_smoothed[:,1,1]), color = color_smoothed, **plotstyle_cov)
+        ax.plot(states_smoothed[:,0] - np.sqrt(covs_smoothed[:,0,0]), 
+                states_smoothed[:,1] - np.sqrt(covs_smoothed[:,1,1]), color = color_smoothed, **plotstyle_cov)
+        
+    ax.legend()
+
+    return fig, ax
+
+
+def plot_filter_result_t(measurements, 
+                         states_filtered, covs_filtered, bicycle_geometry,
+                         states_smoothed=None, covs_smoothed=None, 
+                         color_meas_can='#A50034',
+                         color_meas_gnss='#EC6842',
+                         color_filtered='#FFB81C', color_smoothed='#009B77', axes=None, t_s=0.01):
+    """Plot the filtered/smoothed states into an time plot.
+    """
+    state_labels = ['p_x', 'p_y', 'psi', 'v', 'phi', 'delta', 'dpsi', 'dphi', 
+                'ddelta', 'dv', 'b_psi_imu', 'b_phi_imu', 'b_delta_enc']
+
+    smooth = not(states_smoothed is None) and not(covs_smoothed is None)
+
+    plotstyle_filt = dict(linewidth=1)
+    plotstyle_meas = dict(marker='.', markersize=1, linestyle='None')
+
+    #remove biases
+    #if smooth:
+    #    measurements[:, (4, 6, 8)] -= states_smoothed
+
+    meas_states_can = np.zeros((measurements.shape[0], 10), dtype=float)
+    meas_states_can[:,2] = measurements[:,8]
+    meas_states_can = bicycle_geometry.transform_can2statesN(measurements[:,4:], meas_states_can)
+    meas_states_gnss = bicycle_geometry.transform_gnss2statesN(measurements[:,:4], meas_states_can)
+
+    t = np.arange(0, measurements.shape[0]) * t_s
+
+    n_states = meas_states_can.shape[1]
+    n_biases = states_filtered.shape[1] - n_states
+
+    if axes is None:
+        fig, axes = plt.subplots(n_states, 1, layout='constrained', sharex=True)
+        fig_biases, axes_biases = plt.subplots(n_biases, 1, layout='constrained', sharex=True)
+        axes = np.r_[axes, axes_biases]
+    else:
+        fig = axes[0].get_figure()
+
+    fig_biases, axes_biases = plt.subplots(n_biases, 1, layout='constrained', sharex=True)
+    axes = np.r_[axes, axes_biases]
     
-    state_labels = ['p_x', 'p_y', 'psi', 'dpsi', 'v', 'dv']
-    n_states = 6
-    n_samples = measurements.shape[0]-1
+    for i in range(n_states+n_biases):
+        minval = np.inf
+        maxval = -np.inf
 
-    t = np.arange(0, (n_samples+1)*t_s, t_s)
-    
-    # figures 
-    fig0, ax0 = plt.subplots(1,1)
-    ax0.set_aspect('equal')
-    finite = np.isfinite(measurements[:,0])
-    ax0.plot(measurements[:,0][finite], measurements[:,1][finite], 
-             color='blue', label='measured')
-    
-    fig1, axes1 = plt.subplots(n_states, 1, sharex=True)
+        if i < n_states:
+            fin_can = np.isfinite(meas_states_can[:,i])
+            if np.any(fin_can):
+                axes[i].plot(t[fin_can], meas_states_can[fin_can,i], color= color_meas_can, label = 'can (transf.)', **plotstyle_meas)
+                minval = min(minval, np.min(meas_states_can[fin_can,i]))
+                maxval = max(maxval, np.max(meas_states_can[fin_can,i]))
 
-    # inital state
-    x0 = measurements[0,:]
-    
-    points = MerweScaledSigmaPoints(6, alpha=.1, beta=2., kappa=-1)
+            fin_gnss = np.isfinite(meas_states_gnss[:,i])
+            if np.any(fin_gnss):
+                axes[i].plot(t[fin_gnss], meas_states_gnss[fin_gnss,i], color= color_meas_gnss, label = 'gnss (transf.)', **plotstyle_meas)
+                minval = min(minval, np.min(meas_states_gnss[fin_gnss,i]))
+                maxval = max(maxval, np.max(meas_states_gnss[fin_gnss,i]))
 
-    ukf = UnscentedKalmanFilter(dim_x=6, dim_z=6, fx=move_kinematic, 
-                                hx=measure_kinematic, points=points, dt=t_s)
+        axes[i].plot(t, states_filtered[:,i], color = color_filtered, label = 'ukf', **plotstyle_filt)
+        axes[i].fill_between(t, states_filtered[:,i]+np.sqrt(covs_filtered[:,i,i]), 
+                                states_filtered[:,i]-np.sqrt(covs_filtered[:,i,i]), alpha=0.2, color=color_filtered)
+        minval = min(minval, np.min(states_filtered[:,i]))
+        maxval = max(maxval, np.max(states_filtered[:,i]))
 
-    ukf.x = x0
-    ukf.P *= 0.2
-    ukf.R = R
-    ukf.Q = Q        
+        if smooth:
+            axes[i].plot(t, states_smoothed[:,i], color = color_smoothed, label = 'rts', **plotstyle_filt)
+            axes[i].fill_between(t, states_smoothed[:,i]+np.sqrt(covs_smoothed[:,i,i]), 
+                                    states_smoothed[:,i]-np.sqrt(covs_smoothed[:,i,i]), alpha=0.2, color=color_smoothed)
+            minval = min(minval, np.min(states_smoothed[:,i]))
+            maxval = max(maxval, np.max(states_smoothed[:,i]))
 
-    states_filtered = [x0]
-    covs_filtered = ukf.P[np.newaxis,:,:]
+        rng = maxval - minval
+        axes[i].set_ylim(minval - 0.2 * rng, maxval + 0.2 * rng)
+        axes[i].set_ylabel(state_labels[i])
+        axes[i].grid()
 
-    for i in range(n_samples):
-        #predict
-        ukf.predict()
+    axes[n_states-1].legend()
+    axes[-1].set_xlabel('t [s]')
+    if smooth:
+        axes[0].set_title("filtered and smoothed bicycle states")
+    else:
+        axes[0].set_title("filtered and smoothed bicycle states")
+    axes[n_states].set_title("biases")
+    fig.set_size_inches(10.5, 9)
+
+    return fig, axes
         
-        #update
-        m = measurements[i+1,:]
-
-        gnss_available = np.all(np.isfinite(m))
-        if not gnss_available:
-            m[np.logical_not(np.isfinite(m))] = 0
-            
-        ukf.update(m, gnss_available = gnss_available)
-        
-        states_filtered.append(ukf.x)
-        covs_filtered = np.concatenate((covs_filtered, ukf.P[np.newaxis,:,:]), 
-                                       axis=0)
-
-    states_filtered = np.array(states_filtered)
-    ax0.plot(states_filtered[:,0], states_filtered[:,1], 
-             color = 'orange', label='filtered')
-        
-    for i in range(n_states):
-        axes1[i].set_ylabel(state_labels[i])
-        
-        m = measurements[:,i]
-        finite = np.logical_not(m==0)
-        axes1[i].plot(t[finite], m[finite], 
-                      color = 'blue', label = 'data')
-        axes1[i].plot(t, states_filtered[:,i], 
-                      color = 'orange', label = 'filtered')
-        axes1[i].grid()
-        
-    #smooth
-
-    states_smoothed, covs_smoothed, K = ukf.rts_smoother(states_filtered, 
-                                                         covs_filtered)
-
-    ax0.plot(states_smoothed[:,0], states_smoothed[:,1], 
-             color = 'green', label='smoothed')
-        
-    for i in range(n_states):
-        axes1[i].plot(t, states_smoothed[:,i], 
-                      color = 'green', label = 'smoothed')

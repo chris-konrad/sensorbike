@@ -72,7 +72,7 @@ class InstrumentedBikeGeometry:
         a = v.diff()
         
         h_gnss, l_gnss = sm.symbols('h_gnss, l_gnss')
-        x_gnss, y_gnss, v_gnss, psi_gnss = sm.symbols('x_gnss y_gnss v_gnss psi_gnss')
+        x_gnss, y_gnss, vx_gnss, vy_gnss = sm.symbols('x_gnss y_gnss vx_gnss vy_gnss')
 
         # parameter for the position of the GNSS antenna
         if not np.all([k in self.params.keys() for k in ['l_gnss', 'h_gnss']]):
@@ -96,7 +96,7 @@ class InstrumentedBikeGeometry:
 
         frames = (E, N, B, Sgnss)
         states_E = (x, y_E, psi_E, v, phi, delta, psidot_E, phidot, deltadot, a)
-        gnss_measurements = (x_gnss, y_gnss, psi_gnss, v_gnss)
+        gnss_measurements = (x_gnss, y_gnss, vx_gnss, vy_gnss)
         points = (Pgnss, Prwcp)
 
         return frames, states_E, gnss_measurements, points, r_Prwcp_Pgnss
@@ -115,11 +115,10 @@ class InstrumentedBikeGeometry:
         frames, states_E, gnss_measurements, points, r_Prwcp_Pgnss = self._init_symbols()
         
         E, N, B, Sgnss = frames 
-        x_gnss, y_gnss, psi_gnss, v_gnss = gnss_measurements
+        x_gnss, y_gnss, vx_gnss, vy_gnss = gnss_measurements
         Pgnss, Prwcp = points
 
-        Sgnss.orient_body_fixed(E, (0, 0, psi_gnss), 'XYZ')
-        Pgnss.set_vel(E, Sgnss.x * v_gnss)
+        Pgnss.set_vel(E, vx_gnss * E.x + vy_gnss * E.y)
 
         vel_rwcp_E = Prwcp.v2pt_theory(Pgnss, E, B).subs(self.param_vals)
         speed_rwcp_E = sm.sqrt(vel_rwcp_E.dot(E.x)**2 + vel_rwcp_E.dot(E.y)**2)
@@ -148,14 +147,18 @@ class InstrumentedBikeGeometry:
         Prwcp.set_vel(E, v * B.x)
 
         vel_gnss_E = Pgnss.v2pt_theory(Prwcp, E, B).subs(self.param_vals)
-        speed_gnss_E = sm.sqrt(vel_gnss_E.dot(E.x)**2 + vel_gnss_E.dot(E.y)**2)
-        psi_gnss_E = sm.atan2(vel_gnss_E.dot(E.y), vel_gnss_E.dot(E.x))
+        vx_gnss_E = vel_gnss_E.dot(E.x)
+        vy_gnss_E = vel_gnss_E.dot(E.y)
         x_gnss_E = x - r_Prwcp_Pgnss.dot(E.x)
         y_gnss_E = y_E - r_Prwcp_Pgnss.dot(E.y)
 
-        gnss_measurement = (x_gnss_E, y_gnss_E, psi_gnss_E, speed_gnss_E)
+        gnss_measurement = (x_gnss_E, y_gnss_E, vx_gnss_E, vy_gnss_E)
 
-        self._eval_rwcp2gnss_E = sm.lambdify(states_E, gnss_measurement)
+        self._eval_rwcp2gnss_E = sm.lambdify([states_E], gnss_measurement)
+
+        v_x = Prwcp.vel(E).dot(E.x)
+        v_y = Prwcp.vel(E).dot(E.y)
+        self._eval_vel_polar2cart = sm.lambdify([psi_E, v], [(v_x, v_y)])
 
         
     def _init_can_transformations(self):
@@ -183,19 +186,19 @@ class InstrumentedBikeGeometry:
         can_measurements = [delta_enc, deltadot_enc, phi_imu, wx_imugyro, psi_imu, wz_imugyro, v_rws, ax_imuaccel]
 
         # imu2E and vice-versa
-        B_w_E_Bz = B.ang_vel_in(E).dot(-B.z)                 #what the gyro measures in E
+        B_w_E_Bz = B.ang_vel_in(E).dot(B.z)                 #what the gyro measures in E
         B_w_E_Ez = sm.trigsimp(B.ang_vel_in(E).dot(E.z))     #bicycle yaw rate in E=
 
         B_w_E_Ez_solution = sm.solve(B_w_E_Bz - wz_imugyro, B_w_E_Ez)[0]
         B_w_E_Bz_solution = sm.solve(B_w_E_Ez_solution - psidot_E, wz_imugyro)[0]
 
-        x, y_E, psi_E, v, phi, delta, psidot_E, phidot, deltadot, a
+        #x, y_E, psi_E, v, phi, delta, psidot_E, phidot, deltadot, a
         can_E = ( - psi_imu, v_rws, phi_imu, - delta_enc, B_w_E_Ez_solution, wx_imugyro, - deltadot_enc, ax_imuaccel)
         self._eval_can2E = sm.lambdify((can_measurements, states_E), can_E)
-        self._eval_E2can = sm.lambdify(states_E, [delta, deltadot, phi, phidot, psi_E, B_w_E_Bz_solution, v, a])
+        self._eval_E2can = sm.lambdify([states_E], [- delta, - deltadot, phi, phidot, - psi_E, B_w_E_Bz_solution, v, a])
 
 
-    def transform_gnss2stateE(self, gnss_measurements, states_E):
+    def transform_gnss2statesE(self, gnss_measurements, states_E):
         """ Transform a GNSS measurement to a bicycle state in the E frame.
 
         The transformation depends on the lateral bicycle states. Thus, 
@@ -233,7 +236,7 @@ class InstrumentedBikeGeometry:
         return states_gnss_E
 
 
-    def transform_gnss2stateN(self, gnss_measurement, states_N):
+    def transform_gnss2statesN(self, gnss_measurement, states_N):
         """ Transform a GNSS measurement to a bicycle state in the N frame.
 
         The transformation depends on the lateral bicycle states. Thus, 
@@ -259,14 +262,14 @@ class InstrumentedBikeGeometry:
 
         states_E = self.transform_statesN2statesE(states_N)
 
-        states_gnss_E = self.transform_gnss2stateE(gnss_measurement, states_E)
+        states_gnss_E = self.transform_gnss2statesE(gnss_measurement, states_E)
 
         states_gnss_N = self.transform_statesE2statesN(states_gnss_E)
 
         return states_gnss_N
     
 
-    def transform_stateE2gnss(self, states_E):
+    def transform_statesE2gnss(self, states_E):
         """ Transform a bicycle state in the E-frame to a GNSS measurement.
         Calculates what the GNSS is expected to measure given the current bicycle 
         state. 
@@ -283,7 +286,7 @@ class InstrumentedBikeGeometry:
             A gnss measurement of the position and velocity of the antenna in the E frame
             corresponding to states_E, given as [x_gnss, y_gnss, psi_gnss, v_gnss].
         """
-        return self._eval_rwcp2gnss_E(states_E)
+        return np.array(self._eval_rwcp2gnss_E(states_E))
 
 
     def transform_statesN2gnss(self, states_N):
@@ -304,7 +307,7 @@ class InstrumentedBikeGeometry:
             corresponding to states_E, given as [x_gnss, y_gnss, psi_gnss, v_gnss].
         """
         states_E = self.transform_statesN2statesE(states_N)
-        return self._eval_rwcp2gnss_E(states_E)
+        return np.array(self._eval_rwcp2gnss_E(states_E))
 
 
     def transform_statesE2statesN(self, states_E):
@@ -364,7 +367,7 @@ class InstrumentedBikeGeometry:
         return self.transform_statesE2statesN(states_N)
 
     
-    def transform_can2stateE(self, can_measurements, states_E):
+    def transform_can2statesE(self, can_measurements, states_E):
         """Transform the sensor measurements from the CAN bus 
         to bicycle states in the E-frame.
 
@@ -407,7 +410,7 @@ class InstrumentedBikeGeometry:
         return states_can_E
     
 
-    def transform_can2stateN(self, can_measurements, states_N):
+    def transform_can2statesN(self, can_measurements, states_N):
         """Transform the sensor measurements from the CAN bus 
         to bicycle states in the N-frame.
 
@@ -438,14 +441,14 @@ class InstrumentedBikeGeometry:
         
         states_E = self.transform_statesN2statesE(states_N)
 
-        states_can_E = self.transform_can2stateE(can_measurements, states_E)
+        states_can_E = self.transform_can2statesE(can_measurements, states_E)
 
         states_can_N = self.transform_statesN2statesE(states_can_E)
 
         return states_can_N
     
     
-    def transform_stateE2can(self, states_E):
+    def transform_statesE2can(self, states_E):
         """Transform bicycle states in the E-frame to sensor measurements
         on the can bus. This returns what the CAN sensors would measure 
         if the state was states_E. 
@@ -467,10 +470,10 @@ class InstrumentedBikeGeometry:
             [delta_enc, deltadot_enc, phi_imu, wx_imugyro, psi_imu, wz_imugyro, v_rws, ax_imuaccel].
         """
 
-        return self._eval_E2can(states_E)
+        return np.array(self._eval_E2can(states_E))
     
     
-    def transform_stateN2can(self, states_N):
+    def transform_statesN2can(self, states_N):
         """Transform bicycle states in the E-frame to sensor measurements
         on the can bus. This returns what the CAN sensors would measure 
         if the state was states_E. Used as measurement model in UKF.update().
@@ -493,8 +496,7 @@ class InstrumentedBikeGeometry:
         """
         
         states_E = self.transform_statesN2statesE(states_N)
-
-        return self._eval_E2can(states_E)
+        return np.array(self._eval_E2can(states_E))
      
             
     def transform_trk_N2E(self, data_dict):
