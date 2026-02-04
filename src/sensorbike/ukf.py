@@ -103,8 +103,12 @@ def make_R(sensor_characteristics):
             angle: sigma_angle
     
     The GNSS is omitted/ignored. Instead, we later plug in dynamic uncertainty estimates.
-
     Designed for easy parsing of yaml config files. 
+
+    The 12 measurements are
+    |    gnss    | steer encoder  |          imu          |ws|  |          
+    [x, y, vx, vy, delta, deltadot, phi, gyrox, psi, gyroz, v, a]
+
     
     Parameters
     ----------
@@ -187,7 +191,7 @@ def get_default_filter_settings():
                        "bicycle_parameter_dict": balanceassistv1_with_averagerider}
     
     sensor_std = {"gnss": {"var_inflation_factor": 10},
-                   "IMU": {"roll":float(np.deg2rad(30)),  # little confidence and potential frame misalignment -> inflate
+                   "IMU": {"roll":float(np.deg2rad(60)),  # little confidence and potential frame misalignment -> inflate
                            "yaw": float(np.deg2rad(3.5)), # datasheet values
                            "gyro": float(np.deg2rad(3.1)),
                            "accel": 1.5},   # inflated, true data seems more noisy then datasheet suggests
@@ -199,10 +203,10 @@ def get_default_filter_settings():
      
     process_std = {"x": 1e-6, "y": 1e-6,                # no additional uncertainty in position dynamics
                    "psi": float(np.deg2rad(1)),         # moderate uncertainties to account for model simplifications
-                   "phi": float(np.deg2rad(1)),
+                   "phi": float(np.deg2rad(0.1)),
                    "delta":float(np.deg2rad(2)),    
                    "dpsi": float(np.deg2rad(10)),       # large uncertainties in rates due to zero roll/steer torque assumption
-                   "dphi": float(np.deg2rad(3)), 
+                   "dphi": float(np.deg2rad(10)), 
                    "ddelta": float(np.deg2rad(20)),
                    "v": 0.5,                            # large uncertainties in speed and acceleration due to const. accel. assumption                              
                    "dv": 1,
@@ -275,7 +279,7 @@ def parse_filter_settings(filter_settings_yaml_dict,
     return filter_settings
     
 
-def move_dynamic(x, t_s, bp_model, integration_method='euler'):
+def move(x, t_s, bp_model, integration_method='euler'):
     """
     Predict the next step of the dynamic whipple-carvallo bicycle model
     assuming zero steer and roll torque. 
@@ -375,7 +379,7 @@ def move_dynamic(x, t_s, bp_model, integration_method='euler'):
     return x_pred
 
 
-def measure_dynamic(x, bicycle_geometry):
+def measure(x, bicycle_geometry):
     """ Apply the measurement model to the current state estimate.
     
     The state vector is [x, y, psi, v, phi, delta, dpsi, dphi, ddelta, dv].
@@ -402,7 +406,7 @@ def measure_dynamic(x, bicycle_geometry):
     return np.r_[meas_gnss, meas_can]
 
 
-def filter_dynamic(measurements, uncertainties_gnss, 
+def filter(measurements, uncertainties_gnss, 
                    R, Q,
                    t_s=0.01, smooth = True, plot = True, 
                    integration_method = "backward euler", 
@@ -544,7 +548,6 @@ def filter_dynamic(measurements, uncertainties_gnss,
 
     P0[[10,11], [10,11]] = (3*np.pi)**2  # inflate var for yaw/steer bias: could be any valid angle 
 
-
     # setup bicycle parameters
     if bicycle_parameter_dict is None:
         bicycle_parameter_dict = balanceassistv1_with_averagerider
@@ -554,12 +557,11 @@ def filter_dynamic(measurements, uncertainties_gnss,
     # setup filter
     points = MerweScaledSigmaPoints(n_states, alpha=.1, beta=2., kappa=-1)
     
-    def move(x, t_s):
-        return move_dynamic(x, t_s, bp_model, 
-                            integration_method=integration_method)
+    def wrap_move(x, t_s):
+        return move(x, t_s, bp_model, integration_method=integration_method)
 
     ukf = UnscentedKalmanFilter(dim_x=n_states, dim_z=n_measurements, 
-                                fx=move, hx=measure_dynamic, 
+                                fx=wrap_move, hx=measure, 
                                 points=points, dt=t_s)
     
     ukf.x = x0
@@ -587,7 +589,7 @@ def filter_dynamic(measurements, uncertainties_gnss,
 
         ukf.update(m, R=R, bicycle_geometry=bicycle_geometry)
 
-        state_measurements.append(measure_dynamic(ukf.x, bicycle_geometry))
+        state_measurements.append(measure(ukf.x, bicycle_geometry))
         
         states_filtered[i+1,:] = ukf.x
         covs_filtered[i+1,:,:] = ukf.P
@@ -605,13 +607,16 @@ def filter_dynamic(measurements, uncertainties_gnss,
     
     if plot:
         _plot_measurement_error(measurements, state_measurements)
-        plot_filter_result_xy(measurements, states_filtered, covs_filtered, bicycle_geometry, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
-        plot_filter_result_t(measurements, states_filtered, covs_filtered, bicycle_geometry, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
+        figxy, axxy = plot_filter_result_xy(measurements, states_filtered, covs_filtered, bicycle_geometry, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
+        figt, axest = plot_filter_result_t(measurements, states_filtered, covs_filtered, bicycle_geometry, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
         
+    out = [states_filtered, covs_filtered]
     if smooth:
-        return states_smoothed, covs_smoothed
-    else:
-        return states_filtered, covs_filtered
+        out += [states_smoothed, covs_smoothed]
+    if plot:
+        out += [figt, axest, figxy, axxy]
+
+    return out
     
 
 def _plot_measurement_error(measurements, state_measurements):
@@ -652,6 +657,7 @@ def plot_filter_result_xy(measurements,
     #    measurements[:, (4, 6, 8)] -= states_smoothed
     meas_states_can = np.zeros((measurements.shape[0], 10), dtype=float)
     meas_states_can[:,2] = measurements[:,8]
+    meas_states_can[:,4] = measurements[:,6]
     meas_states_can = bicycle_geometry.transform_can2statesN(measurements[:,4:], states_smoothed[:,:10])
     meas_states_gnss = bicycle_geometry.transform_gnss2statesN(measurements[:,:4], states_smoothed[:,:10])
 
