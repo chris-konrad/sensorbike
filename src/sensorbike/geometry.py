@@ -515,13 +515,19 @@ class InstrumentedBikeGeometry:
         data_dict : dict or trajdatamanager.Track
             The same data object but transformed.
         """
-
         keys_to_mirror = ['y', 'psi', 'dpsi', 'delta', 'ddelta']
         
         if isinstance(data_dict, dict):
             keys = list(data_dict.keys())
         elif isinstance(data_dict, Track):
             keys = data_dict.data_feature_keys
+            if 'reference_frame' not in data_dict.metadata:
+                print(f"Warning: Transforming track '{data_dict.track_id}' without current reference frame metadata property. Transformation N -> E.")
+            else:
+                if data_dict.metadata['reference_frame'] == 'E':
+                    return data_dict
+                else:
+                    data_dict.metadata['reference_frame'] = 'E'
         else:
             raise ValueError(f"data_dict must be 'dict' or 'Track'. Instead it was '{type(data_dict)}'.")
         
@@ -534,6 +540,8 @@ class InstrumentedBikeGeometry:
                     found_k = True
             if not found_k:
                 raise KeyError(f"Couldn't find data feature corresponding to key '{k}' in data_dict with keys {keys}.")
+            
+
         
         return data_dict
     
@@ -553,4 +561,19 @@ class InstrumentedBikeGeometry:
         data_dict : dict or trajdatamanager.Track
             The same data object but transformed.
         """
-        return self.transform_trk_N2E(data_dict)
+
+        if isinstance(data_dict, Track):
+            if 'reference_frame' in data_dict.metadata:
+                if data_dict.metadata['reference_frame'] == 'N':
+                    return data_dict
+                else:
+                    data_dict.metadata['reference_frame'] = 'N'
+
+            trk_transformed = self.transform_trk_N2E(data_dict)
+
+            if 'reference_frame' in trk_transformed.metadata:
+                trk_transformed.metadata['reference_frame'] = 'N'
+            
+            return trk_transformed
+        else:
+            return self.transform_trk_N2E(data_dict)

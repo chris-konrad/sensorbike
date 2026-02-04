@@ -35,7 +35,7 @@ from trajdatamanager.gnss import RTKLibGNSSManager, RTKLibGNSSTrack
 from trajdatamanager.utils import to_finite
 
 # local imports
-from sensorbike.ukf import filter_dynamic, get_default_filter_settings, make_Q, make_R
+from sensorbike.ukf import filter, get_default_filter_settings, make_Q, make_R
 from sensorbike.canbus import process_can, decode_parquet, verify_filepath_dbc, list_decoded_canlogs
 from sensorbike.geometry import InstrumentedBikeGeometry
 
@@ -288,12 +288,22 @@ class InstrumentedBicycleData():
                         trk[k] = to_continous_angle(trk[k])
             return trk
         
+        def _limit_angle(trk):
+            for k in trk.data_feature_keys:
+                for kk in ['psi', 'phi', 'delta']:
+                    pattern = rf"(?<!d){kk}"
+                    if re.findall(pattern, k):
+                        trk[k] = limit_angle(trk[k])
+            return trk
+
+        
         # combine into one track
         t,  t_span = self._find_time_frame(trk_gnss, trk_can) 
 
-        #convert to continous angles
-        #trk_can = _to_continous_angles(trk_can)
+        #interpolate
+        trk_can = _to_continous_angles(trk_can)
         trk_can.sample_at_times(np.r_[t, t[-1]+dt.timedelta(seconds=self.t_s)])
+        trk_can = _limit_angle(trk_can)
 
         t = trk_can.t
         t_span = (t[0], t[-1])
@@ -695,7 +705,7 @@ class InstrumentedBicycleData():
         """
         
         if verbose:
-            print("Running Unscented Kalman Filter ...", end="")
+            print("Running Unscented Kalman Filter ... ", end="")
 
         keys_out = ["x", "y", "psi", "v", "phi", 
                     "delta", "dpsi", "dphi", "ddelta", "a"]
@@ -730,33 +740,23 @@ class InstrumentedBicycleData():
 
         measurements = np.c_[measurements_gnss, measurements_can]
 
-        data_filtered, steer_angle_bias = filter_dynamic(measurements, uncertainties_gnss, 
-                                                         R, Q, 
-                                                         integration_method=int_method,
-                                                         bicycle_parameter_dict=bparams,
-                                                         plot=plot_filter_details,
-                                                         bicycle_geometry=self.bike_geom)
-        
-        #the smoothed results are in the N frame. The measurements
-        #are assumed to be in the E frame -> transform
-        #TODO: This should be able to process dicts.
-        data_dict_filt = {}
-        for i, k in enumerate(keys_out):
-            data_dict_filt[k] = data_filtered[:,i]
- 
-        if self.desired_reference_frame == 'E':
-            data_dict_filt = self.bike_geom.transform_N2E(data_dict_filt)
-        data_dict_filt["psi"] = limit_angle(data_dict_filt["psi"])
-        
-        
-        for i, k in enumerate(keys_out):
-            data_filtered[:,i] = data_dict_filt[k]
-    
+        results = filter(measurements, uncertainties_gnss, 
+                         R, Q, 
+                         integration_method=int_method,
+                         bicycle_parameter_dict=bparams,
+                         plot=plot_filter_details,
+                         bicycle_geometry=self.bike_geom)
+
+        states_smoothed = results[2]
+
+        metadata = self.trk_raw.metadata
+        metadata['reference_frame'] = 'N'
         
         self.trk_filtered = Track(f"Filtered states (E-frame): {self.name}", 0, self.trk_raw.t, 
-                                  data_filtered, data_feature_keys=keys_out,
-                                  metadata = self.trk_raw.metadata, 
+                                  states_smoothed, data_feature_keys=keys_out,
+                                  metadata = metadata, 
                                   yaw_feature_index=2)
+        self.trk_filtered = self.bike_geom.transform_trk_N2E(self.trk_filtered)
         
         if verbose:
             print("done!")
@@ -984,8 +984,9 @@ class BalanceAssistLogDataManager(DataManager):
         t_a_can, a_can, mask = to_finite(t_can, test=a_can, return_mask=True)
         
         # roll and yaw and linear acceleration from the IMU
+        df['yaw'] = to_continous_angle(df['yaw'])
         df = df.interpolate(method='time', limit=5)
-        yaw = df["yaw"]
+        yaw = limit_angle(df["yaw"])
         roll = df["roll"]
         gyro_x = df["gyro_x"]
         gyro_z = df["gyro_z"]
