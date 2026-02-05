@@ -228,36 +228,6 @@ class InstrumentedBicycleData():
             rts_smoother='#009B77')
         
     
-    def _transform_gnss_to_rearwheel(self, trk):
-        """
-        Transform the gnss measurements to the rearwheel contact patch. 
-
-        Parameters
-        ----------
-        trk_gnss : trajdatamanager.Track
-            A track object holding the loaded can data.
-
-        Returns
-        -------
-        trk_gnss : trajdatamanager.Track
-            The updated track object holding the loaded can data.
-
-        """
-       
-        x, y = self.bike_geom.transform_gnss2rwcp(trk['x_gnss'], 
-                                                    trk['y_gnss'], 
-                                                    trk['psi_can'], 
-                                                    trk['phi_can'])
-        
-        trk['x_gnss'] = x
-        trk['y_gnss'] = y
-        
-        trk = update_yaw(trk, keys=('x_gnss', 'y_gnss', 'psi_gnss'))
-
-        self.current_reference_frame = 'E'
-        
-        return trk
-    
     def _combine_datasets(self, trk_gnss, trk_can):
         """
         Combine the datasets from the two sensors into one:
@@ -404,9 +374,7 @@ class InstrumentedBicycleData():
         -------
         trk_can : trajdatamanager.Track
             A track object holding the loaded can data.
-
         """
-
         # make paths and directorys
         dir_can_log = os.path.join(self.dir_base, self.subdir_bike_can)
         dir_bike_gnss_report = os.path.join(
@@ -455,17 +423,6 @@ class InstrumentedBicycleData():
             A track object holding the loaded gnss data.
 
         """
-        
-        #Derive limits of the experiment area from measurements relative to the
-        #target lights.
-        #if x_limits is None:
-        #    x_limits = np.mean(self.target_locations[:,0]) - np.array([28+8.7, 8.7])
-
-        if plot_results:
-            fig, ax = plt.subplots(1, 1)
-            ax.set_title("Full GNSS data and extracted runs (rotated).")
-            #plt.plot([x_limits[0], x_limits[0]], [-50, 50], color="orange")
-            #plt.plot([x_limits[1], x_limits[1]], [-50, 50], color="orange")
 
         # built paths and directories
         dir_bike_gnss_sol = os.path.join(
@@ -495,7 +452,7 @@ class InstrumentedBicycleData():
         # rotate the track for convenience and plot again
         trk_gnss.rotate_xy(self.rotation, deg=True)
         if plot_results:
-            trk_gnss.plot_xy(ax=ax, color="gray")
+            trk_gnss.plot_xy(color="gray")
 
         trk_gnss.plot_uncertainties()
 
@@ -509,10 +466,9 @@ class InstrumentedBicycleData():
         stores them in a single track object. 
 
         The measurements are not transformed to bicycle states. Instead they 
-        are left in their original sensor reference frame. The only exception 
-        is GNSS, which is transformed from Lat/Long/Height (LLH) to XY rotated
-        by 'rotation' (specified in the constructor) relative to East/North around
-        Up. 
+        are left in their original sensor reference frame. The only transformation is
+        applied to GNSS, which is transformed from Lat/Long/Height (LLH) to XY rotated
+        by 'rotation' (specified in the constructor) relative to East/North around  Up. 
 
         Parameters
         ----------
@@ -551,17 +507,6 @@ class InstrumentedBicycleData():
         trk_raw = self._combine_datasets(trk_gnss, trk_can)
         if verbose:
             print("done!")
-        
-        # transform gnss to rear-wheel contact point
-        #if self.transfrom_to_rwcontactpoint:
-        #    if verbose:
-        #        print(("Transforming gnss data to rear-wheel "
-        #               "contact point ..."), end="")
-        #    trk = self._transform_gnss_to_rearwheel(trk)
-        #    # desired reference frame
-        #    trk = self._transform_to_desired_referenceframe(trk)
-        #    if verbose:
-        #        print("done!")
                        
         self.trk_raw = trk_raw
         self.data_loaded = True
@@ -575,112 +520,16 @@ class InstrumentedBicycleData():
                 print("done!")
 
         return self.trk
-    
-
-    def transform_raw2states(self, reference_frame='E', plot=False):
-        """Transfrom the raw sensor data in to bicycle states represented in the 
-        chosen reference Frame.
-
-        Parameters
-        ----------
-        reference_frame : str, optional
-            The frame to represent the data in. Choose from 'E' and 'N'. The 
-            N-frame is the frame with x and y directions fixed to the ground and z pointing
-            into the ground (as common in bicycle dynamic research and used for the Carvallo-Whipple model). 
-            The E-frame is the frame with x and y directions fixed to the ground 
-            and z pointing upwards (as common in traffic engineering and used for 
-            cyclistsocialforces). The default is 'E'. 
-        plot : bool, optional
-            Plot the transformed data, by default False
-        """
-
-        features_can = ["delta", "ddelta", "phi", "gyrox", "psi", "gyroz", "vrws", "ax"]
-        idx_can = [self.trk_raw.data_feature_keys.index(k+'_can') for k in features_can]
-        can_measurements = self.trk_raw.data[:,idx_can]
-
-        features_gnss = ["x", "y", "psi", "v"]
-        idx_gnss = [self.trk_raw.data_feature_keys.index(k+'_gnss') for k in features_gnss]
-        gnss_measurements = self.trk_raw.data[:,idx_gnss]
-
-        if reference_frame == 'E':        
-            states_E = np.empty((can_measurements.shape[0], 10))
-            states_E[:,4] = can_measurements[:,2]
-
-            states_can_transformed = self.bike_geom.transform_can2statesE(can_measurements, states_E)
-            states_gnss_transformed = self.bike_geom.transform_gnss2statesE(gnss_measurements, states_can_transformed)
-        elif reference_frame == 'N':
-            states_N = np.empty((can_measurements.shape[0], 10))
-            states_N[:,4] = - can_measurements[:,2]
-
-            states_can_transformed = self.bike_geom.transform_can2statesN(can_measurements, states_N)
-            states_gnss_transformed = self.bike_geom.transform_gnss2statesN(gnss_measurements, states_can_transformed)            
-
-        # extract existing
-        states_can_transformed = states_can_transformed[:,2:]
-        features_can_transformed = ["psi_can", "v_can", "phi_can", "delta_can", "psidot_can", "phidot_can", "deltadot_can", "a_can"]
-
-        states_gnss_transformed = states_gnss_transformed[:,:4]
-        features_gnss_transformed = ['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss']
-
-        metadata = dict(reference_frame=reference_frame, track_type='raw_states')
-
-        self.trk_raw_states = Track(f'Raw States ({reference_frame} frame): {self.name}', 2, self.trk_raw.t,
-                    np.c_[states_gnss_transformed, states_can_transformed],
-                    data_feature_keys=features_gnss_transformed+features_can_transformed,
-                    metadata=metadata)
-        
-        if plot:
-            self.plot_raw_states()
-
-        return self.trk_raw_states
-
-
-    def plot_raw_states(self):
-        """Plot the raw sensor data transformed to raw state trajectories.
-
-        Returns
-        -------
-        fig, axes
-            Figure and axes of the plot.
-        """
-
-        if self.trk_raw_states:
-            trk = self.trk_raw_states
-        else:
-            raise RuntimeError(f"No raw state trajectory found! Run load_raw() and transform_raw2states() before calling plot_raw_states()!")
-        
-        features_can_transformed = np.array(["psi_can", "v_can", "phi_can", "delta_can", "psidot_can", "phidot_can", "deltadot_can", "a_can"])
-        features_gnss_transformed = np.array(['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss'])
-        
-        fig, axes = plt.subplots(10,1, sharex=True, layout='constrained')
-        trk.plot(axes=axes[:4], features=features_gnss_transformed, color=self.colors['gnss'], plot_over_timestamps=True)
-        trk.plot(axes=axes[[2,4,6,7,9]], features=features_can_transformed[[0,2,4,5,7]], color=self.colors['imu'], plot_over_timestamps=True)
-        trk.plot(axes=axes[3], features=features_can_transformed[1], color=self.colors['wheelspeed'], plot_over_timestamps=True)
-        trk.plot(axes=axes[[5,8]], features=features_can_transformed[[3,6]], color=self.colors['steer_encoder'], plot_over_timestamps=True)
-
-        for ax, lbl in zip(axes, trk.data_feature_keys[:2]+trk.data_feature_keys[4:]):
-            ax.set_ylabel(lbl.split('_')[0])
-        axes[-1].set_xlabel('time')
-        axes[0].set_title(trk.track_id)
-
-        return fig, axes
-
-
-    def _transform_to_desired_referenceframe(self, trk):
-
-        if self.current_reference_frame == 'E' and self.desired_reference_frame == 'N':
-            trk = self.bike_geom.transform_E2N(trk)
-            self.current_reference_frame = 'N'
-            trk.metadata['reference_frame'] = 'N'
-        elif self.current_reference_frame == 'N' and self.desired_reference_frame == 'E':
-            trk = self.bike_geom.transform_N2E(trk)
-            self.current_reference_frame = 'E'
-            trk.metadata['reference_frame'] = 'E'
-        
-        return trk
 
     def get_bicyclestates_raw(self, plot=False, verbose=True):
-        pass
+        """ Get bicycle states using the naive mapping from measurements to states.
+
+        Fast and sufficient for coarse applications.
+        
+        TODO
+        """
+        raise NotImplementedError()
+    
     
     def get_bicyclestates_filtered(self, plot=False, verbose=True):
         """ Apply an Unscented Kalman Filter to fuse GNSS, IMU, steer encoder and
@@ -776,75 +625,9 @@ class InstrumentedBicycleData():
             print("done!")
     
         return self.states_filtered
-    
-    
-    def load_and_filter(self, 
-                        t_begin=None, 
-                        t_end=None, 
-                        measurement_noise_std=None, 
-                        process_noise_std=None,
-                        integration_method=None,
-                        bicycle_parameter_dict=None,
-                        verbose=True, 
-                        plot_data=True):
-        """
-        Load instrumented bicycle data and filter the loaded data with a
-        Unscented Kalman Filter.
-
-        Parameters
-        ----------
-        t_begin : datetime.datetime, optional
-            Crop the available data to begin at this time. The default is None.
-        t_end : datetime.datetime, optional
-            Crop the available data to end at this time. The default is None.
-        measurement_noise_std : array, optional
-            Array of sensor noise variances for filtering in the order
-            [std_x, std_y, std_psi, std_v, std_phi, std_delta, std_dpsi, 
-             std_dphi, std_ddelta, std_dv]. If None, values are given 
-            by sensorbike.ukf.get_default_filter_settings(). The default is 
-            None.
-        process_noise_std : array, optional
-            Array of process noise noise variances for filtering in the 
-            order [std_x, std_y, std_psi, std_v, std_phi, std_delta, std_dpsi, 
-             std_dphi, std_ddelta, std_dv]. If None, values are given by 
-            sensorbike.ukf.get_default_filter_settings(). The default is None.
-        integration_method: str, optional
-            The integration method for the integration of the system dynamics 
-            in the prediction step. Can be 'backward euler' or 'midpoint'. 
-            The default is 'midpoint'.
-        bicycle_parameter_dict : dict, optional
-            The dictionary of physical bicycle parameters for the prediction
-            of the bicycle dynamics. The dictionary is expected to be in the 
-            format defined by BicycleParameters (https://github.com/moorepants/
-            BicycleParameters/tree/master). The parameters should be measured 
-            from the actual bicycle used to collect the data. The parameters
-            of the instrumented bicycle used by defaul are stored in 
-            sensorbike.bicycleparameters.bike_with_rider. 
-        verbose : bool, optional
-            Verbose output. The default is True.
-        plot_data : bool, optional
-            Plot the results after filtering. The default is True.
-
-        Returns
-        -------
-        trk_filtered : trajdatamanager.Track
-            A track object holding the filtered trajectory data.
-
-        """
-    
-        self.load(t_begin=t_begin, t_end=t_end, 
-                  verbose=verbose, plot_data=False)
-        self.apply_filter(measurement_noise_std=measurement_noise_std,
-                          process_noise_std=process_noise_std,
-                          integration_method=integration_method,
-                          bicycle_parameter_dict=bicycle_parameter_dict,
-                          plot_data=plot_data,
-                          verbose=verbose)
         
-        return self.trk_filtered
-    
-        
-    def plot_raw(self):
+
+    def plot_raw_data(self):
         """
         Plot the raw data per sensor over time.
         """
@@ -888,6 +671,22 @@ class InstrumentedBicycleData():
         
         return fig_t, axes_t
     
+
+    def plot_filtered_states(self):
+        """Plot the filtered states (xy-plot and t-plot)
+        """
+        if not hasattr(self, 'states_filtered'):
+            raise RuntimeError("No filtered bicycle states available. Call 'get_bicyclestates_filtered()' before plotting!")
+        
+        axxy = self.states_filtered.plot_xy(color=self.colors['rts_smoother'])
+        figxy = axxy.get_figure()
+
+        axest = self.states_filtered.plot(color=self.colors['rts_smoother'], plot_over_timestamps=True)
+        figt = axest.get_figure()
+
+        return figxy, axxy, figt, axest
+
+
 class BalanceAssistLogDataManager(DataManager):
     """
     Manage the CAN bus log data from the Balance Assist Bikes.
@@ -1197,6 +996,7 @@ class BalanceAssistLogDataManager(DataManager):
 class BicycleStates(Track):
     """Store and process the state trajectories of the Carvallo-Whipple bicycle model."""
 
+    UNITS = ['m', 'm', 'rad', 'm/s', 'rad', 'rad', 'rad/s', 'rad/s', 'rad/s']
     FEATURES = ['x', 'y', 'psi', 'v', 'phi', 'delta', 'psidot', 'phidot', 'deltadot']
     REF_FRAMES = ['E', 'N']
 
@@ -1265,6 +1065,45 @@ class BicycleStates(Track):
 
         return self
     
+    
+    def plot(self, axes=None, features=None, plot_over_timestamps=False, t_plot=None, **plot_kwargs):
+        """Plot the bicycle states with units over time.
+
+        Parameters
+        ----------
+        axes : Axes or list of Axes, optional
+            Axes to be plotted in. Must be the same number of axes as features 
+            selected for plotting. If None, creates a new figure.
+        features : str or list, optional
+            List of feature names to plot. Must be the same number as the given axes. If
+            None, all features are plotted.
+        plot_over_timestamps : bool, optional
+            If true, the data is plotted over timestamps. If false, the data
+            is plotted over sample number. The default is False.
+        t : array-like, optional
+            Force plotting over a given array of t values. t must be the length of 
+            the sample number. Overwrites plot_over_timestamps. Default is None.
+        plot_kwargs : dict
+            Keyword arguments passed to matplotlib.pyplot.plot(_,_,**plot_kwargs).
+
+        Returns
+        -------
+        axes : list of axes
+            The axes that the plot was created in.
+        """
+
+        if features is None:
+            features = self.data_feature_keys
+        units = [self.UNITS[self.FEATURES.index(f)] for f in features]
+        
+        super().plot(axes=axes, features=features, plot_over_timestamps=plot_over_timestamps,
+                     t_plot=t_plot, **plot_kwargs)
+        
+        for i, ax in enumerate(axes):
+            ax.set_ylabel(f"{features[i]} [{units[i]}]")
+
+        return axes
+
 
 def to_continous_angle(angle, tol = 0.75):
     """
