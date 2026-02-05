@@ -679,36 +679,32 @@ class InstrumentedBicycleData():
         
         return trk
 
+    def get_bicyclestates_raw(self, plot=False, verbose=True):
+        pass
     
-    def apply_filter(self, plot_data=True,
-                           plot_filter_details=False,
-                           verbose=True):
-        """
-        Filter the data from the instrumented bike with anUnscented Kalman 
-        Filter.
+    def get_bicyclestates_filtered(self, plot=False, verbose=True):
+        """ Apply an Unscented Kalman Filter to fuse GNSS, IMU, steer encoder and
+        wheelspeed sensor into an optimal estimate of the Carvallo-Whipple bicycle
+        states. 
+
+        Returns a sensorbike.bikedata.BicycleStates(Track) object with the states
+        [x, y, psi, v, phi, delta, psidot, phidot, deltadot]. 
 
         Parameters
         ----------
         verbose : bool, optional
             Verbose output. The default is True.
-        plot_data : bool, optional
-            Plot the results after filtering. The default is True.
-        plot_filter_details : bool, optional
-            A more detailed plot of the filter and smoother results useful for
-            calibrating the filter. 
+        plot : bool, optional
+            Plot the filter results. The default is True
 
         Returns
         -------
-        trk_filtered : trajdatamanager.Track
-            A track object holding the filtered trajectory data.
-
+        trk_filtered : sensorbike.bikedata.BicycleStates(Track)
+            The filtered bicycle states.
         """
         
         if verbose:
-            print("Running Unscented Kalman Filter ... ", end="")
-
-        keys_out = ["x", "y", "psi", "v", "phi", 
-                    "delta", "dpsi", "dphi", "ddelta", "a"]
+            print(f"Getting UKF bicycle state estimates ... ", end="")
         
         def _parse_settings(sname):
             if sname in self.filter_settings.keys():
@@ -735,9 +731,6 @@ class InstrumentedBicycleData():
         idx_can = [self.trk_raw.data_feature_keys.index(k) for k in features_track_can]
         measurements_can = self.trk_raw.data[:,idx_can]
 
-        #measurements_gnss[:,2] = to_continous_angle(measurements_gnss[:,2])
-        #measurements_can[:,4] = to_continous_angle(measurements_can[:,4])
-
         measurements = np.c_[measurements_gnss, measurements_can]
 
         results = filter(measurements, uncertainties_gnss, 
@@ -745,21 +738,26 @@ class InstrumentedBicycleData():
                          integration_method=int_method,
                          bicycle_parameter_dict=bparams,
                          plot=False,
-                         plot_meas_error=plot_filter_details,
+                         plot_meas_error=plot,
                          bicycle_geometry=self.bike_geom)
+        states_smoothed = results[2]
         
-        if plot_filter_details:
-            plot_filter_result_xy(measurements, *results)
+        if plot: 
+            figxy, axxy = plot_filter_result_xy(measurements, *results)
 
             idx_orient = [self.trk_raw.data_feature_keys.index(k) for k in ['psi_can', 'phi_can']]
-            plot_filter_result_t(measurements, *results, measurements_imuorient=self.trk_raw.data[:,idx_orient])
+            figt, axest, figauxt, axesauxt = plot_filter_result_t(measurements, *results, measurements_imuorient=self.trk_raw.data[:,idx_orient])
 
-        states_smoothed = results[2]
+            figs = {'states_xy': (figxy, axxy), 
+                    'states_t': (figt, axest), 
+                    'states_aux_t': (figauxt, axesauxt), 
+                    'measurements': tuple(results[4:6])}
 
         # analyze steer-angle bias
-        steer_bias = np.median(states_smoothed[:,-3])
+        steer_bias = np.mean(states_smoothed[:,-3])
         steer_bias_std = np.std(states_smoothed[:,-3])
-        if steer_bias_std < np.deg2rad(0.1):
+        steer_bias_converged = steer_bias_std < np.deg2rad(0.1)
+        if steer_bias_converged:
             convergence_msg = " (converged)"
         else:
             convergence_msg = ""
@@ -768,25 +766,16 @@ class InstrumentedBicycleData():
 
         # pack into track object
         metadata = self.trk_raw.metadata
-        metadata['reference_frame'] = 'N'
+        metadata['steer_angle_bias'] = {'mean_rad': steer_bias, 'std_rad': steer_bias_std, 'converged': steer_bias_converged}
         
-        self.trk_filtered = Track(f"filtered states: {self.name}", 0, self.trk_raw.t, 
-                                  states_smoothed, data_feature_keys=keys_out,
-                                  metadata = metadata, 
-                                  yaw_feature_index=2)
-        self.trk_filtered = self.bike_geom.transform_trk_N2E(self.trk_filtered)
-        
+        self.states_filtered = BicycleStates(f"Filtered states {self.name}", self.trk_raw.t,
+                                             states_smoothed, reference_frame='N', metadata=metadata)
+        self.states_filtered.figures = figs
+
         if verbose:
             print("done!")
-            
-        #if plot_data:
-            #if verbose:
-            #    print("Plotting data ...", end="")
-            #    axes_t, axes_xy = self.plot_data(self.trk)
-            #if verbose:
-            #    print("done!")
     
-        return self.trk_filtered
+        return self.states_filtered
     
     
     def load_and_filter(self, 
@@ -1221,7 +1210,7 @@ class BicycleStates(Track):
         t : array
             The timestamps of the N samples in the trajectory. Must be shaped (N,). Must be an array of Python datetime objects.
         data : array
-            The data array shaped (N, 9) with the nine states x, y, psi, v, phi, delta, psidot, phidot, deltadot. Distances in m, 
+            The data array shaped (N, 9) with the nine states [x, y, psi, v, phi, delta, psidot, phidot, deltadot]. Distances in m, 
             speed in m/s, angles in rad and rates in rad/s.
         reference_frame : str
             The reference frame of the given data array. Data may be given in the 'N' frame, typically used for bicycle dynamics
