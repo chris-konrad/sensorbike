@@ -87,27 +87,31 @@ def get_statespace_matrices(bp_model, v):
 
 def make_R(sensor_characteristics):
     """
-    Creates the constant part of the measurement noise matrix R from a nested dict 
+    Creates the time-constant part of the measurement noise matrix R from a nested dict 
     containting the standard errors of each measurement sorted by sensor.
     
     The dict must be structured:
-        IMU: 
-            roll: sigma_roll
-            yaw: sigma_yaw
+        gnss:
+            position: sigma_pos     (Will be added to the dynamic uncertainties)
+            velocity: sigma_vel     (Will be added to the dynamic uncertainties)
+        imu: 
             gyro: sigma_gyro
-            accel: sigma_accel
+            accely: sigma_accel_y
+            accelz: sigma_accel_z
         speedometer:
             v: sigma_v
         steerencoder:
             rate: sigma_rate
             angle: sigma_angle
     
-    The GNSS is omitted/ignored. Instead, we later plug in dynamic uncertainty estimates.
-    Designed for easy parsing of yaml config files. 
+    All sigmas refer to time-constant measurement errors in the
+    unit of their respective measurement.
 
     The 11 measurements are
     |    gnss    | steer encoder  |          imu        |ws|          
     [x, y, vx, vy, delta, deltadot, gyrox, gyroz, ay, ay, v]
+
+    Use get_default_filter_settings() for defaults.
     
     Parameters
     ----------
@@ -117,7 +121,7 @@ def make_R(sensor_characteristics):
     Returns
     -------
     R : array
-        Array (11x11) of static measurement variances. 
+        Array (11x11) of time-constant measurement variances. 
     """
 
     R = np.zeros((11,11), dtype=float)
@@ -143,12 +147,19 @@ def make_R(sensor_characteristics):
     
     return R
     
+
 def make_Q(process_noise_dict):
     """
     Creates the process noise matrix Q from a dict containting the 
     standard errors of each state.
     
-    Must contain x, y, psi, v, dv, phi, dphi, psi, dpsi, delta, and ddelta.
+    Must contain the process noise of the states [x, y, psi, v, dv, phi, dphi, psi, dpsi, delta, ddelta],
+    as well as:
+        eps : process noise of the IMU misalignment (should be very small)
+        b_delta : process noise of the steer bias (should be very small)
+        b_gyro : process noise of gyro biases (should be very small)
+
+    Use get_default_filter_settings() for defaults.
     
     Parameters
     ----------
@@ -186,10 +197,13 @@ def get_default_filter_settings():
     
     GNSS, speedometer and steerencoder values are guesses. 
 
+    See inline comments for reasoning about the default settings.
+
+    Result can be passed to make_R and make_Q
+
     Returns
     -------
-    None.
-
+    filter_settings : dict
     """
     
     filter_settings = {"integration_method": "midpoint",
@@ -228,7 +242,7 @@ def get_default_filter_settings():
     return filter_settings
 
 
-def parse_filter_settings(filter_settings_yaml_dict, 
+def get_yaml_filter_settings(filter_settings_yaml_dict, 
                           bicycle_parameter_dict=None):
     """
     Parse a yaml dict of the filter settings. Return the dict format required
@@ -379,7 +393,7 @@ def move(x, t_s, bp_model, integration_method='euler'):
     return x_pred
 
 
-def measure(x, bicycle_geometry):
+def measure(x, bicycle_geometry, estimate_gyro_biases):
     """ Apply the measurement model to the current state estimate.
     
     The state vector is [x, y, psi, v, phi, delta, dpsi, dphi, ddelta, epsx, epsy, epsz, bias_steer].
@@ -400,18 +414,20 @@ def measure(x, bicycle_geometry):
     
     #add biases 
     meas_can[0] += x[12]    # delta
-    #meas_can[2] += x[13]    # gyrox
-    #meas_can[3] += x[14]    # gyroz
+    if estimate_gyro_biases:
+        meas_can[2] += x[13]    # gyrox
+        meas_can[3] += x[14]    # gyroz
 
     return np.r_[meas_gnss, meas_can]
 
 
 def filter(measurements, uncertainties_gnss, 
-                   R, Q,
-                   t_s=0.01, smooth = True, plot = True, plot_meas_error = True,
-                   integration_method = "backward euler", 
-                   bicycle_parameter_dict=None, 
-                   bicycle_geometry=None):
+            R, Q,
+            t_s=0.01, smooth = True, plot = True, plot_meas_error = True,
+            integration_method = "backward euler", 
+            bicycle_parameter_dict=None, 
+            bicycle_geometry=None,
+            estimate_gyro_biases=False):
     """
     Filter instrumented bicycle measurements from different sensors using
     an Unscented Kalman Filter.
@@ -462,7 +478,9 @@ def filter(measurements, uncertainties_gnss,
     bicycle_parameter_dict : dict
         A dictionary of bicycle parameters as returned by the bicycleparameters
         toolbox. Use this to customize the bike. 
-
+    estimate_gyro_biases : bool
+        If true, adds gyro bias states to the filter. Use with caution! May destabilize the filter.
+        Default is False.
     """
 
     if bicycle_geometry is None:
@@ -533,7 +551,7 @@ def filter(measurements, uncertainties_gnss,
         P0[8,8] = R0[5,5]              #deltadot
 
         P0[9:12, 9:12] = np.deg2rad(2)**2 * np.eye(3) # IMU<->bicycle orientation is small.
-        P0[12:15,12:15] = (3*np.pi)**2 *np.eye(3)   # large, steer bias could be any valid angle  
+        P0[12:15,12:15] = (3*np.pi)**2 *np.eye(3)   # large, bias could be any valid angle  
 
         return x0, P0
 
@@ -577,7 +595,7 @@ def filter(measurements, uncertainties_gnss,
 
         R_i = update_R(i+1)
 
-        ukf.update(m, R=R_i, bicycle_geometry=bicycle_geometry)
+        ukf.update(m, R=R_i, bicycle_geometry=bicycle_geometry, estimate_gyro_biases=estimate_gyro_biases)
 
         state_measurements.append(measure(ukf.x, bicycle_geometry))
         
