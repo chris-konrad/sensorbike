@@ -612,9 +612,9 @@ def filter(measurements, uncertainties_gnss,
     return out
     
 
-def plot_measurement_error(measurements, state_measurements, features):
+def plot_measurement_error(measurements, state_measurements):
 
-    measurement_labels = ['x', 'y', 'vx', 'vy', 'delta', 'deltadot', 'gyrox', 'gyroz', 'ay', 'az', 'v']
+    features = ['x', 'y', 'vx', 'vy', 'delta', 'deltadot', 'gyrox', 'gyroz', 'ay', 'az', 'v']
 
     t = np.arange(0, measurements.shape[0])
 
