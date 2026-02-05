@@ -468,7 +468,6 @@ def filter(measurements, uncertainties_gnss,
     if bicycle_geometry is None:
         bicycle_geometry = InstrumentedBikeGeometry()
 
-    measurement_labels = ['x', 'y', 'vx', 'vy', 'delta', 'deltadot', 'gyrox', 'gyroz', 'ay', 'az', 'v']
     bicyclestate_labels = ['x', 'y', 'psi', 'v', 'phi', 'delta', 'dpsi', 'dphi', 'ddelta']
     imu_orient_labels = ['eps_x', 'eps_y', 'eps_z']
     bias_labels = ['b_delta', 'b_gyrox', 'b_gyroz']
@@ -503,28 +502,7 @@ def filter(measurements, uncertainties_gnss,
             R_i[2:4,2:4] = 1e10 * np.eye(2)      
         
         return R_i
-
-    def transform_measurement2state(m_i):
-        """Build a state vector from measurements. Select GNSS orientation over CAN and 
-        wheelspeed over GNSS speed."""
-
-        states_E_can = np.zeros(10)
-        states_E_can[2] = np.arctan2(m_i[3], m_i[2])
-        states_E_can[4] = m_i[4]
-        states_N_can = bicycle_geometry.transform_statesE2statesN(states_E_can)
-
-        states_N_can = bicycle_geometry.transform_can2statesN(m_i[4:], states_N_can)
-
-        states_N_can[2] = - np.arctan2(m_i[3], m_i[2])
-        states_N_gnss = bicycle_geometry.transform_gnss2statesN(m_i[:4], states_N_can)
-
-        states_N = np.r_[states_N_gnss[:3], states_N_can[3:]]
-        meas_gnss = bicycle_geometry.transform_statesN2gnss(states_N)
-
-        #states_N = np.r_[states_N_gnss[:2], states_N_can[2:]]
-        #meas_can = bicycle_geometry.transform_statesN2can(states_N)
-
-        return states_N
+    
 
     def make_initial_state(m, u):
         """ Make the initial state from first measurement """
@@ -618,7 +596,7 @@ def filter(measurements, uncertainties_gnss,
         states_smoothed[:, 3] = states_filtered[:, 3]
     
     if plot_meas_error:
-        _plot_measurement_error(measurements, state_measurements, measurement_labels)
+        fige, axese = plot_measurement_error(measurements, state_measurements)
     if plot:
         figxy, axxy = plot_filter_result_xy(measurements, states_filtered, covs_filtered, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
         fig_bike, axes_bike, fig_supp, axes_supp = plot_filter_result_t(measurements, states_filtered, covs_filtered,states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
@@ -628,11 +606,15 @@ def filter(measurements, uncertainties_gnss,
         out += [states_smoothed, covs_smoothed]
     if plot:
         out += [fig_bike, axes_bike, fig_supp, axes_supp, figxy, axxy]
+    if plot_meas_error:
+        out += [fige, axese]
 
     return out
     
 
-def _plot_measurement_error(measurements, state_measurements, features):
+def plot_measurement_error(measurements, state_measurements, features):
+
+    measurement_labels = ['x', 'y', 'vx', 'vy', 'delta', 'deltadot', 'gyrox', 'gyroz', 'ay', 'az', 'v']
 
     t = np.arange(0, measurements.shape[0])
 
@@ -652,6 +634,8 @@ def _plot_measurement_error(measurements, state_measurements, features):
     axes[6].set_title("imu")
     axes[10].set_title("wheelspeed sensor")
     fig.suptitle("Measurements")
+
+    return fig, axes
 
 
 def plot_filter_result_xy(measurements, 
