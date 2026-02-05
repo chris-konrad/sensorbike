@@ -35,7 +35,7 @@ from trajdatamanager.gnss import RTKLibGNSSManager, RTKLibGNSSTrack
 from trajdatamanager.utils import to_finite
 
 # local imports
-from sensorbike.ukf import filter, get_default_filter_settings, make_Q, make_R
+from sensorbike.ukf import filter, get_default_filter_settings, make_Q, make_R, plot_filter_result_t, plot_filter_result_xy
 from sensorbike.canbus import process_can, decode_parquet, verify_filepath_dbc, list_decoded_canlogs
 from sensorbike.geometry import InstrumentedBikeGeometry
 
@@ -729,9 +729,9 @@ class InstrumentedBicycleData():
 
         uncertainties_track_gnss = ["varx_gnss", "vary_gnss", "varvx_gnss", "varvy_gnss", "covxy_gnss", "covvxvy_gnss"] 
         idx_gnss_uncert = [self.trk_raw.data_feature_keys.index(k) for k in uncertainties_track_gnss]
-        uncertainties_gnss = self.filter_settings['sensor_std']['gnss']['var_inflation_factor'] * self.trk_raw.data[:,idx_gnss_uncert]
+        uncertainties_gnss = self.trk_raw.data[:,idx_gnss_uncert]
 
-        features_track_can = ["delta_can", "ddelta_can", "phi_can", "gyrox_can", "psi_can", "gyroz_can", "vrws_can", "ax_can"]
+        features_track_can = ["delta_can", "ddelta_can", "gyrox_can", "gyroz_can", "ay_can", "az_can", "vrws_can"]
         idx_can = [self.trk_raw.data_feature_keys.index(k) for k in features_track_can]
         measurements_can = self.trk_raw.data[:,idx_can]
 
@@ -744,15 +744,33 @@ class InstrumentedBicycleData():
                          R, Q, 
                          integration_method=int_method,
                          bicycle_parameter_dict=bparams,
-                         plot=plot_filter_details,
+                         plot=False,
+                         plot_meas_error=plot_filter_details,
                          bicycle_geometry=self.bike_geom)
+        
+        if plot_filter_details:
+            plot_filter_result_xy(measurements, *results)
+
+            idx_orient = [self.trk_raw.data_feature_keys.index(k) for k in ['psi_can', 'phi_can']]
+            plot_filter_result_t(measurements, *results, measurements_imuorient=self.trk_raw.data[:,idx_orient])
 
         states_smoothed = results[2]
 
+        # analyze steer-angle bias
+        steer_bias = np.median(states_smoothed[:,-3])
+        steer_bias_std = np.std(states_smoothed[:,-3])
+        if steer_bias_std < np.deg2rad(0.1):
+            convergence_msg = " (converged)"
+        else:
+            convergence_msg = ""
+        print(f"    steer angle bias: {np.rad2deg(steer_bias):.2f}+/-{np.rad2deg(steer_bias_std):.2f} deg"+convergence_msg)
+
+
+        # pack into track object
         metadata = self.trk_raw.metadata
         metadata['reference_frame'] = 'N'
         
-        self.trk_filtered = Track(f"Filtered states (E-frame): {self.name}", 0, self.trk_raw.t, 
+        self.trk_filtered = Track(f"filtered states: {self.name}", 0, self.trk_raw.t, 
                                   states_smoothed, data_feature_keys=keys_out,
                                   metadata = metadata, 
                                   yaw_feature_index=2)
@@ -844,7 +862,9 @@ class InstrumentedBicycleData():
         
         plot_kwargs = self.lineplot_kwargs
         
-        fig_t, axes_t = plt.subplots(14,1, sharex=True, layout='constrained')
+        fig_t, axes_t = plt.subplots(15,1, sharex=True, layout='constrained')
+        for ax in axes_t:
+            ax.grid()
             
         #gnss
         axes_t[0].set_title('RTK GNSS (SwiftNav Piki Multi)')
@@ -855,22 +875,22 @@ class InstrumentedBicycleData():
         
         #imu
         axes_t[6].set_title('Onboard IMU (BNO086)')
-        feat_imu = ['psi_can', 'gyroz_can', 'phi_can', 'gyrox_can', 'ax_can']
-        self.trk_raw.plot(features=feat_imu, axes = axes_t[6:11],
+        feat_imu = ['psi_can', 'gyroz_can', 'phi_can', 'gyrox_can', 'ay_can', 'az_can']
+        self.trk_raw.plot(features=feat_imu, axes = axes_t[6:12],
                 plot_over_timestamps=True, 
                 color=self.colors['imu'], **plot_kwargs)
         
         #steer encoder
-        axes_t[9].set_title('Steer Encoder')
+        axes_t[12].set_title('Steer Encoder')
         feat_enc = ['delta_can', 'ddelta_can']
-        self.trk_raw.plot(features=feat_enc, axes = axes_t[11:13],
+        self.trk_raw.plot(features=feat_enc, axes = axes_t[12:14],
                 plot_over_timestamps=True, 
                 color=self.colors['steer_encoder'], **plot_kwargs)
 
         #wheelspeed sensor
-        axes_t[11].set_title('Wheelspeed sensor (rear)')
-        feat_wsp = ['vrws_can',]
-        self.trk_raw.plot(features=feat_wsp, axes = [axes_t[13]],
+        axes_t[14].set_title('Wheelspeed sensor (rear)')
+        feat_wsp = 'vrws_can'
+        self.trk_raw.plot(features=feat_wsp, axes = axes_t[14],
                         plot_over_timestamps=True, 
                         color=self.colors['wheelspeed'], **plot_kwargs)
             
@@ -990,7 +1010,8 @@ class BalanceAssistLogDataManager(DataManager):
         roll = df["roll"]
         gyro_x = df["gyro_x"]
         gyro_z = df["gyro_z"]
-        accel = df["accel_x"]
+        ay = df["accel_y"]
+        az = df["accel_z"]
 
         # speed
         #   Derived from the rear wheelspeed assuming a nominal circumfence of 221cm
@@ -1082,9 +1103,9 @@ class BalanceAssistLogDataManager(DataManager):
             'can',
             2,
             t_can_global,
-            np.c_[steer, dsteer, roll, gyro_x, yaw, gyro_z, speed, accel],
+            np.c_[steer, dsteer, roll, gyro_x, yaw, gyro_z, speed, ay, az],
             data_feature_keys=["delta", "ddelta", "phi", "gyrox", "psi", 
-                               "gyroz", "vrws", "ax"],
+                               "gyroz", "vrws", "ay", "az"],
             metadata=metadata,
         )
 
@@ -1183,6 +1204,78 @@ class BalanceAssistLogDataManager(DataManager):
 
         return t_out, a_out, path_timesync_source
   
+
+class BicycleStates(Track):
+    """Store and process the state trajectories of the Carvallo-Whipple bicycle model."""
+
+    FEATURES = ['x', 'y', 'psi', 'v', 'phi', 'delta', 'psidot', 'phidot', 'deltadot']
+    REF_FRAMES = ['E', 'N']
+
+    def __init__(self, track_id, t, data, reference_frame, metadata={}):
+        """Create a BicycleStates Track object.
+        
+        Parameters
+        ----------
+        track_id : str
+            The ID of this state track.
+        t : array
+            The timestamps of the N samples in the trajectory. Must be shaped (N,). Must be an array of Python datetime objects.
+        data : array
+            The data array shaped (N, 9) with the nine states x, y, psi, v, phi, delta, psidot, phidot, deltadot. Distances in m, 
+            speed in m/s, angles in rad and rates in rad/s.
+        reference_frame : str
+            The reference frame of the given data array. Data may be given in the 'N' frame, typically used for bicycle dynamics
+            (N.x and N.y forming the ground plane, N.z pointing downwards), or the 'E' frame, common in traffic simulation (E.x and E.y 
+            forming the ground plane, E.z pointing downwards). N is rotated by pi around E.x with respect to E. Additionally, 
+            Steer angles and rates are mirrored: E_delta(dot) = - N_delta(dot).
+        """
+
+        class_id = 2
+        yaw_feature_index = 2
+
+        if not data.shape[1] == len(self.FEATURES):
+            raise ValueError((f"A BicycleStates Track object must have {len(self.FEATURES)} features/states. ",
+                              f"The data array must be shaped (N, {len(self.FEATURES)}). Instead it was {data.shape}. "
+                              f"Please provide {self.FEATURES}!"))
+        
+        super().__init__(track_id, class_id, t, data, metadata, yaw_feature_index=yaw_feature_index, data_feature_keys=self.FEATURES)
+
+
+    def transform_reference(self, frame):
+        """Transform the bicycle states to reference a different reference frame (in place).
+
+        Available frames are the 'N' frame, typically used for bicycle dynamics
+        (N.x and N.y forming the ground plane, N.z pointing downwards), or the 'E' frame, 
+        common in traffic simulation (E.x and E.y forming the ground plane, E.z pointing downwards). 
+        N is rotated by pi around E.x with respect to E. Additionally, steer angles and 
+        rates are mirrored: E_delta(dot) = - N_delta(dot). In the N-frame the positive steer axis point 
+        downwards along the steer column. 
+
+        Parameters
+        ----------
+        frame : str
+            The target frame of the transformation. If the target frame equals the current frame, 
+            nothing will happen. 
+
+        Return
+        ------
+        BicycleStates
+            The transformed object.
+        """
+
+        if frame not in self.REF_FRAMES:
+            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
+
+        if frame != self.reference_frame:
+            states_flip = ['psi', 'psidot', 'delta', 'deltadot']
+            idx_flip = [self.data_feature_keys.index(s) for s in states_flip]
+
+            self.data[:,idx_flip] *= -1
+
+            self.reference_frame = frame
+
+        return self
+    
 
 def to_continous_angle(angle, tol = 0.75):
     """
