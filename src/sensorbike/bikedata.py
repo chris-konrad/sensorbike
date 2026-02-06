@@ -355,7 +355,9 @@ class InstrumentedBicycleData():
         # check that all gnss times are in the timeframe
         # hacky but efficient solution
         t_float = np.arange(t.size).astype(int) * 10**3
-        tgnss64 = trk_gnss.t.astype('datetime64[ns]')
+        with warnings.catch_warnings():     #ignore timezone cast warning.
+            warnings.simplefilter("ignore")
+            tgnss64 = trk_gnss.t.astype('datetime64[ns]')
         t_float_gnss = (tgnss64[i_gnss_begin:i_gnss_end+1] - tgnss64[i_gnss_begin]) / np.timedelta64(int(self.t_s * 10**3), 'us')
         t_float_gnss = t_float_gnss.astype(int)
         check = np.all(np.isin(t_float_gnss, t_float))
@@ -454,7 +456,7 @@ class InstrumentedBicycleData():
         if plot_results:
             trk_gnss.plot_xy(color="gray")
 
-        trk_gnss.plot_uncertainties()
+        #trk_gnss.plot_uncertainties()
 
         return trk_gnss
     
@@ -514,8 +516,11 @@ class InstrumentedBicycleData():
         #plotting
         if plot:
             if verbose:
-                print("Plotting raw sensor data ...", end="")
-            fig, axes = self.plot_raw()
+                print("Plotting raw sensor data ... ", end="")
+            fig, axes = self.plot_raw_data()
+
+            self.figures = {"raw": fig} | trk_can.figures
+
             if verbose:
                 print("done!")
 
@@ -592,10 +597,10 @@ class InstrumentedBicycleData():
         states_smoothed = results[2]
         
         if plot: 
-            figxy, axxy = plot_filter_result_xy(measurements, *results)
+            figxy, axxy = plot_filter_result_xy(measurements, *results[:4])
 
             idx_orient = [self.trk_raw.data_feature_keys.index(k) for k in ['psi_can', 'phi_can']]
-            figt, axest, figauxt, axesauxt = plot_filter_result_t(measurements, *results, measurements_imuorient=self.trk_raw.data[:,idx_orient])
+            figt, axest, figauxt, axesauxt = plot_filter_result_t(measurements, *results[:4], measurements_imuorient=self.trk_raw.data[:,idx_orient])
 
             figs = {'states_xy': (figxy, axxy), 
                     'states_t': (figt, axest), 
@@ -603,22 +608,26 @@ class InstrumentedBicycleData():
                     'measurements': tuple(results[4:6])}
 
         # analyze steer-angle bias
-        steer_bias = np.mean(states_smoothed[:,-3])
-        steer_bias_std = np.std(states_smoothed[:,-3])
-        steer_bias_converged = steer_bias_std < np.deg2rad(0.1)
+        convergence_period = int(round(self.filter_settings['convergence_period'] / self.t_s))
+        steer_bias = np.mean(states_smoothed[convergence_period:,-3])
+        steer_bias_std = np.std(states_smoothed[convergence_period:,-3])
+        steer_bias_converged = steer_bias_std < np.deg2rad(0.5)
         if steer_bias_converged:
             convergence_msg = " (converged)"
         else:
             convergence_msg = ""
-        print(f"    steer angle bias: {np.rad2deg(steer_bias):.2f}+/-{np.rad2deg(steer_bias_std):.2f} deg"+convergence_msg)
+        if verbose:
+            print(f"\n    steer angle bias: {np.rad2deg(steer_bias):.2f}+/-{np.rad2deg(steer_bias_std):.2f} deg"+convergence_msg, end="")
 
 
         # pack into track object
         metadata = self.trk_raw.metadata
-        metadata['steer_angle_bias'] = {'mean_rad': steer_bias, 'std_rad': steer_bias_std, 'converged': steer_bias_converged}
-        
-        self.states_filtered = BicycleStates(f"Filtered states {self.name}", self.trk_raw.t,
-                                             states_smoothed, reference_frame='N', metadata=metadata)
+        metadata['steer_angle_bias'] = {'mean_rad': float(steer_bias), 'std_rad': float(steer_bias_std), 'converged': bool(steer_bias_converged)}
+
+
+        convergence_period = int(round(self.filter_settings['convergence_period'] / self.t_s))
+        self.states_filtered = BicycleStates(f"Filtered states {self.name}", self.trk_raw.t[convergence_period:],
+                                             states_smoothed[convergence_period:,:9], reference_frame='N', metadata=metadata)
         self.states_filtered.figures = figs
 
         if verbose:
@@ -666,8 +675,8 @@ class InstrumentedBicycleData():
                         plot_over_timestamps=True, 
                         color=self.colors['wheelspeed'], **plot_kwargs)
             
-        axes_t[-2].legend()
         axes_t[0].set_title(f"Raw Sensor Data: {self.name}")
+        fig_t.set_size_inches(10.5, 9)
         
         return fig_t, axes_t
     
@@ -841,31 +850,32 @@ class BalanceAssistLogDataManager(DataManager):
         n_offset = (np.argmax(a_corr) - len(a_gnss_interp) + 1)
         t_offset = n_offset * t_ss
             #t_offset = -np.argmax(a_corr) * 0.005
-        print(f"Time offset: {t_offset:.4f} s ", end="")
+        print(f"\n    Time offset: {t_offset:.4f} s ")
 
         #plot for validation
-        fig, ax = plt.subplots(1,1)
-        if n_offset < 0: 
-            ax.plot(a_gnss_interp[abs(n_offset):]-a_gnss_interp_med, label='gnss')
-            ax.plot(a_can_interp-a_can_interp_med, label='can')
-        else:
-            ax.plot(a_gnss_interp-a_gnss_interp_med, label='gnss')
-            ax.plot(a_can_interp[abs(n_offset):]-a_can_interp_med, label='can')
-        ax.legend()
+        #fig, ax = plt.subplots(1,1)
+        #if n_offset < 0: 
+        #    ax.plot(a_gnss_interp[abs(n_offset):]-a_gnss_interp_med, label='gnss')
+        #    ax.plot(a_can_interp-a_can_interp_med, label='can')
+        #else:
+        #    ax.plot(a_gnss_interp-a_gnss_interp_med, label='gnss')
+        #    ax.plot(a_can_interp[abs(n_offset):]-a_can_interp_med, label='can')
+        #ax.legend()
         
         #identify drift
         if n_offset < 0: 
-            get_drift = find_drift(a_gnss_interp[abs(n_offset):], a_can_interp,
+            get_drift, drift_rate, figdrift, _ = find_drift(a_gnss_interp[abs(n_offset):], a_can_interp,
                                    t_ss, plot=True)
             drift = get_drift(t_can[:,np.newaxis])
         else:
-            get_drift = find_drift(a_gnss_interp, a_can_interp[abs(n_offset):], 
+            get_drift, drift_rate, figdrift, _ = find_drift(a_gnss_interp, a_can_interp[abs(n_offset):], 
                                    t_ss, plot=True)
             drift = get_drift(t_can[:,np.newaxis]-t_offset)
+        print(f"    Time drift: {drift_rate:.4f} ms/s ", end="")
             
         # plot for validation
-        fig2, ax2 = plt.subplots(1,1)
-        ax2.plot(a_corr)
+        #fig2, ax2 = plt.subplots(1,1)
+        #ax2.plot(a_corr)
 
         # derive timstamps for CAN data from GNSS time, offset and drift
         t_can_global = t_gnss_global_begin + dt.timedelta(seconds=1) * \
@@ -873,17 +883,20 @@ class BalanceAssistLogDataManager(DataManager):
 
         # plot for validation
         fig3, ax3 = plt.subplots(1, 1)
-        ax3.plot(t_gnss_global, a_gnss-a_gnss_interp_med, label='GNSS')
+        ax3.plot(t_gnss_global, a_gnss-a_gnss_interp_med, label='gnss')
         ax3.plot(t_can_global[mask], a_can-a_can_interp_med, label='can')
-        ax3.set_title(("Time synchronization based on total linear"
-                       "acceleration"))
+        ax3.set_xlabel("time t")
+        ax3.set_ylabel("total linear acceleration |a| [m/s^2]")
+        ax3.legend()
+        ax3.set_title(("Time synchronization based on total linear acceleration"))
 
         metadata = {
             "track_type": "BalanceAssistLogData",
             "source": can_files,
             "source_timesync": path_timesync_source,
             "dbc_file": self.dbc_file,
-            "time_offset": t_offset,
+            "time_offset": float(t_offset),
+            "drift_ms-per-s": float(drift_rate),
         }
 
         # create a track with the CAN data
@@ -896,6 +909,7 @@ class BalanceAssistLogDataManager(DataManager):
                                "gyroz", "vrws", "ay", "az"],
             metadata=metadata,
         )
+        trk.figures = {"timesync": fig3, "drift": figdrift}
 
         return trk
 
@@ -1029,6 +1043,10 @@ class BicycleStates(Track):
         
         super().__init__(track_id, class_id, t, data, metadata, yaw_feature_index=yaw_feature_index, data_feature_keys=self.FEATURES)
 
+        if reference_frame not in self.REF_FRAMES:
+            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
+        self.reference_frame=reference_frame
+
 
     def transform_reference(self, frame):
         """Transform the bicycle states to reference a different reference frame (in place).
@@ -1127,6 +1145,8 @@ def to_continous_angle(angle, tol = 0.75):
         Continous array.
 
     """
+    if isinstance(angle, (pd.DataFrame, pd.Series)):
+        angle = angle.to_numpy()
     
     finite = np.isfinite(angle)
     angle_fin = angle[finite]
@@ -1351,8 +1371,13 @@ def find_drift(x1, x2, t_s, plot=False):
         ax.set_title((f"Time offset of signal 2 relative to signal 1 \n "
                       f"drift(t) = ({reg.estimator_.coef_[0]*1000:.4f}) ms/s "
                       f"* t + ({reg.estimator_.intercept_:.4f}) s"))
+        
+    drift = reg.estimator_.coef_[0]*1000
     
-    return reg.predict
+    if plot:
+        return reg.predict, drift, fig, ax
+    else:
+        return reg.predict, drift, None, None
 
 
 def cart2polar(x, y):

@@ -207,7 +207,9 @@ def get_default_filter_settings():
     """
     
     filter_settings = {"integration_method": "midpoint",
-                       "bicycle_parameter_dict": balanceassistv1_with_averagerider}
+                       "bicycle_parameter_dict": balanceassistv1_with_averagerider,
+                       "convergence_period": 0.1,          # time in s at the begining of the signal to discard to give the filter time to coverge.
+                       }
     
     sensor_std = {"gnss": {"position": 0.015,             # additionaly noise due to wobbly pole, guess; Will be added to RTKLib uncertainties 
                            "velocity": np.sqrt((0.015**2)/(2*0.1**2))}, # error propagation of wobbly pole noise
@@ -597,7 +599,7 @@ def filter(measurements, uncertainties_gnss,
 
         ukf.update(m, R=R_i, bicycle_geometry=bicycle_geometry, estimate_gyro_biases=estimate_gyro_biases)
 
-        state_measurements.append(measure(ukf.x, bicycle_geometry))
+        state_measurements.append(measure(ukf.x, bicycle_geometry, estimate_gyro_biases=estimate_gyro_biases))
         
         states_filtered[i+1,:] = ukf.x
         covs_filtered[i+1,:,:] = ukf.P
@@ -652,6 +654,8 @@ def plot_measurement_error(measurements, state_measurements):
     axes[6].set_title("imu")
     axes[10].set_title("wheelspeed sensor")
     fig.suptitle("Measurements")
+
+    fig.set_size_inches(10.5, 9)
 
     return fig, axes
 
@@ -744,11 +748,8 @@ def plot_filter_result_t(measurements,
     n_gnss = naive_states_gnss.shape[1]
 
     fig_bike, axes_bike = plt.subplots(n_states, 1, layout='constrained', sharex=True)
-    fig_supp, axes_supp = plt.subplots(n_eps+n_biases, 1, layout='constrained', sharex=True)
-    axes = np.r_[axes_bike, axes_supp]
-
-    fig_biases, axes_biases = plt.subplots(n_biases, 1, layout='constrained', sharex=True)
-    axes = np.r_[axes, axes_biases]
+    fig_biases, axes_biases = plt.subplots(n_biases+n_eps, 1, layout='constrained', sharex=True)
+    axes = np.r_[axes_bike, axes_biases]
     
     for i in range(n_states+n_eps+n_biases):
         minval = np.inf
@@ -796,7 +797,7 @@ def plot_filter_result_t(measurements,
     axes[n_states+n_eps].set_title("biases")
 
     fig_bike.set_size_inches(10.5, 9)
-    fig_supp.set_size_inches(10.5, 4)
+    fig_biases.set_size_inches(10.5, 4)
 
-    return fig_bike, axes_bike, fig_supp, axes_supp
+    return fig_bike, axes_bike, fig_biases, axes_biases 
         
