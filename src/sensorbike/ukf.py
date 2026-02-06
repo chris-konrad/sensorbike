@@ -226,10 +226,10 @@ def get_default_filter_settings():
      
     process_std = {"x": 1e-6, "y": 1e-6,                # no additional uncertainty in position dynamics
                    "psi": float(np.deg2rad(1)),         # moderate uncertainties to account for model simplifications
-                   "phi": float(np.deg2rad(1)),
+                   "phi": float(np.deg2rad(0.2)),
                    "delta":float(np.deg2rad(1)),    
                    "dpsi": float(np.deg2rad(20)),       # large uncertainties due to missing angular rates in gyroz measurement model
-                   "dphi": float(np.deg2rad(20)),       # large uncertainties in roll and steer rates due to zero roll/steer torque assumption
+                   "dphi": float(np.deg2rad(15)),       # large uncertainties in roll and steer rates due to zero roll/steer torque assumption
                    "ddelta": float(np.deg2rad(40)),
                    "v": 1,                              # large uncertainties in speed and acceleration due to const. accel. assumption                              
                    "b_delta": float(np.deg2rad(0.01)),  # tiny, steer bias should be const.
@@ -395,7 +395,7 @@ def move(x, t_s, bp_model, integration_method='euler'):
     return x_pred
 
 
-def measure(x, bicycle_geometry, estimate_gyro_biases):
+def measure(x, bicycle_geometry, estimate_gyro_biases, estimate_imu_orient_misalignment):
     """ Apply the measurement model to the current state estimate.
     
     The state vector is [x, y, psi, v, phi, delta, dpsi, dphi, ddelta, epsx, epsy, epsz, bias_steer].
@@ -410,9 +410,13 @@ def measure(x, bicycle_geometry, estimate_gyro_biases):
     measurement : array
         Measrurement 
     """
+    if estimate_imu_orient_misalignment:
+        eps = x[9:12]
+    else:
+        eps = np.zeros(3)
 
     meas_gnss = bicycle_geometry.transform_states2gnss(x[:9])
-    meas_can = bicycle_geometry.transform_states2can(x[:9], )
+    meas_can = bicycle_geometry.transform_states2can(x[:9], eps)
     
     #add biases 
     meas_can[0] += x[12]    # delta
@@ -429,7 +433,8 @@ def filter(measurements, uncertainties_gnss,
             integration_method = "backward euler", 
             bicycle_parameter_dict=None, 
             bicycle_geometry=None,
-            estimate_gyro_biases=False):
+            estimate_gyro_biases=False,
+            estimate_imu_orient_misalignment=False):
     """
     Filter instrumented bicycle measurements from different sensors using
     an Unscented Kalman Filter.
@@ -483,6 +488,9 @@ def filter(measurements, uncertainties_gnss,
     estimate_gyro_biases : bool
         If true, adds gyro bias states to the filter. Use with caution! May destabilize the filter.
         Default is False.
+    estimate_imu_orient_misalignment : bool
+        If true, estimates the misalignment of the imu with respect to it's nominal mounting position. 
+        Use with caution! May destabilize the filter.
     """
 
     if bicycle_geometry is None:
@@ -597,9 +605,13 @@ def filter(measurements, uncertainties_gnss,
 
         R_i = update_R(i+1)
 
-        ukf.update(m, R=R_i, bicycle_geometry=bicycle_geometry, estimate_gyro_biases=estimate_gyro_biases)
+        ukf.update(m, R=R_i, bicycle_geometry=bicycle_geometry, 
+                   estimate_gyro_biases=estimate_gyro_biases,
+                   estimate_imu_orient_misalignment=estimate_imu_orient_misalignment)
 
-        state_measurements.append(measure(ukf.x, bicycle_geometry, estimate_gyro_biases=estimate_gyro_biases))
+        state_measurements.append(measure(ukf.x, bicycle_geometry, 
+                                          estimate_gyro_biases=estimate_gyro_biases,
+                                          estimate_imu_orient_misalignment=estimate_imu_orient_misalignment))
         
         states_filtered[i+1,:] = ukf.x
         covs_filtered[i+1,:,:] = ukf.P

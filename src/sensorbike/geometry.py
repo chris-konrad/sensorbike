@@ -91,7 +91,7 @@ class InstrumentedBikeGeometry:
         # Set rotations of reference frames
         N.orient_body_fixed(E, (sm.pi, 0, 0), 'XYZ')
         B.orient_body_fixed(N, (psi, phi, 0), 'ZXY')
-        Simu.orient_body_fixed(B, (epsy, epsx, epsz), 'YXZ')
+        Simu.orient_body_fixed(B, (epsx, epsy, epsz), 'XYZ')
 
         O = me.Point('O')
         Prwcp = me.Point('P_rwcp')

@@ -69,8 +69,7 @@ class InstrumentedBicycleData():
         filter_settings = None,
         gnss_data_settings = {},
         can_data_settings = {},
-        transfrom_to_rwcontactpoint = True,
-        reference_frame = 'N', 
+        desired_reference_frame = 'N', 
     ):
         """
         Create a InstrumentedBicycleData object.
@@ -148,7 +147,7 @@ class InstrumentedBicycleData():
         transfrom_to_rwcontactpoint : bool, optional
             Transform GNSS locations to the rear-wheel contact point of the 
             bicycle. The default is True.
-        reference_frame : str, optional
+        desired_reference_frame : str, optional
             The frame to represent filtered bicycle states in. Choose from 'E' and 'N'. The 
             N-frame is the frame with x and y directions fixed to the ground and z pointing
             into the ground (as common in bicycle dynamic research and used for the Carvallo-Whipple model). 
@@ -183,14 +182,12 @@ class InstrumentedBicycleData():
         self.filename_can = filename_can
         self.t_s = t_s
         self.name = f"{self.experiment_name}/{self.trial_name}"
-        self.transfrom_to_rwcontactpoint = transfrom_to_rwcontactpoint
         self.is_filtered = False
         
         # reference frame
-        if reference_frame not in ['E', 'N']:
-            raise ValueError(f"The reference frame must be 'E' or 'N', instead it was '{reference_frame}'.")
-        self.desired_reference_frame = reference_frame
-        self.current_reference_frame = 'E'
+        if desired_reference_frame not in ['E', 'N']:
+            raise ValueError(f"The reference frame must be 'E' or 'N', instead it was '{desired_reference_frame}'.")
+        self.desired_reference_frame = desired_reference_frame
 
         # rotation and reference location
         self.rotation = rotation
@@ -214,8 +211,8 @@ class InstrumentedBicycleData():
         self.can_data_settings = can_data_settings
         
         # data properties
-        self.trk = None
-        self.trk_filtered = None
+        self.data_raw = None
+        self.states_filtered = None
         
         # plot params
         marker = '.'
@@ -514,7 +511,7 @@ class InstrumentedBicycleData():
         if verbose:
             print("done!")
                        
-        self.trk_raw = trk_raw
+        self.data_raw = trk_raw
         self.data_loaded = True
 
         #plotting
@@ -528,7 +525,7 @@ class InstrumentedBicycleData():
             if verbose:
                 print("done!")
 
-        return self.trk
+        return self.data_raw
 
     def get_bicyclestates_raw(self, plot=False, verbose=True):
         """ Get bicycle states using the naive mapping from measurements to states.
@@ -578,16 +575,16 @@ class InstrumentedBicycleData():
         bparams = _parse_settings('bicycle_parameter_dict')
         
         features_track_gnss = ["x_gnss", "y_gnss", "vx_gnss", "vy_gnss"]
-        idx_gnss = [self.trk_raw.data_feature_keys.index(k) for k in features_track_gnss]
-        measurements_gnss = self.trk_raw.data[:,idx_gnss]
+        idx_gnss = [self.data_raw.data_feature_keys.index(k) for k in features_track_gnss]
+        measurements_gnss = self.data_raw.data[:,idx_gnss]
 
         uncertainties_track_gnss = ["varx_gnss", "vary_gnss", "varvx_gnss", "varvy_gnss", "covxy_gnss", "covvxvy_gnss"] 
-        idx_gnss_uncert = [self.trk_raw.data_feature_keys.index(k) for k in uncertainties_track_gnss]
-        uncertainties_gnss = self.trk_raw.data[:,idx_gnss_uncert]
+        idx_gnss_uncert = [self.data_raw.data_feature_keys.index(k) for k in uncertainties_track_gnss]
+        uncertainties_gnss = self.data_raw.data[:,idx_gnss_uncert]
 
         features_track_can = ["delta_can", "ddelta_can", "gyrox_can", "gyroz_can", "ay_can", "az_can", "vrws_can"]
-        idx_can = [self.trk_raw.data_feature_keys.index(k) for k in features_track_can]
-        measurements_can = self.trk_raw.data[:,idx_can]
+        idx_can = [self.data_raw.data_feature_keys.index(k) for k in features_track_can]
+        measurements_can = self.data_raw.data[:,idx_can]
 
         measurements = np.c_[measurements_gnss, measurements_can]
 
@@ -597,14 +594,15 @@ class InstrumentedBicycleData():
                          bicycle_parameter_dict=bparams,
                          plot=False,
                          plot_meas_error=plot,
-                         bicycle_geometry=self.bike_geom)
+                         bicycle_geometry=self.bike_geom,
+                         estimate_gyro_biases=False)
         states_smoothed = results[2]
         
         if plot: 
             figxy, axxy = plot_filter_result_xy(measurements, *results[:4])
 
-            idx_orient = [self.trk_raw.data_feature_keys.index(k) for k in ['psi_can', 'phi_can']]
-            figt, axest, figauxt, axesauxt = plot_filter_result_t(measurements, *results[:4], measurements_imuorient=self.trk_raw.data[:,idx_orient])
+            idx_orient = [self.data_raw.data_feature_keys.index(k) for k in ['psi_can', 'phi_can']]
+            figt, axest, figauxt, axesauxt = plot_filter_result_t(measurements, *results[:4], measurements_imuorient=self.data_raw.data[:,idx_orient])
 
             figs = {'states_xy': (figxy, axxy), 
                     'states_t': (figt, axest), 
@@ -625,14 +623,14 @@ class InstrumentedBicycleData():
 
 
         # pack into track object
-        metadata = self.trk_raw.metadata
+        metadata = self.data_raw.metadata
         metadata['steer_angle_bias'] = {'mean_rad': float(steer_bias), 'std_rad': float(steer_bias_std), 'converged': bool(steer_bias_converged)}
 
 
         convergence_period = int(round(self.filter_settings['convergence_period'] / self.t_s))
-        self.states_filtered = BicycleStates(f"Filtered states {self.name}", self.trk_raw.t[convergence_period:],
+        self.states_filtered = BicycleStates(f"Filtered states {self.name}", self.data_raw.t[convergence_period:],
                                              states_smoothed[convergence_period:,:9], reference_frame='N', metadata=metadata)
-        self.states_filtered = self.states_filtered.transform_reference(self.reference_frame)
+        self.states_filtered = self.states_filtered.transform_reference(self.desired_reference_frame)
         self.states_filtered.figures = figs
         
         if verbose:
@@ -655,28 +653,28 @@ class InstrumentedBicycleData():
         #gnss
         axes_t[0].set_title('RTK GNSS (SwiftNav Piki Multi)')
         feat_gnss = ['x_gnss', 'y_gnss', 'psi_gnss', 'v_gnss', 'vx_gnss', 'vy_gnss'] 
-        self.trk_raw.plot(features=feat_gnss, axes = axes_t[0:6],
+        self.data_raw.plot(features=feat_gnss, axes = axes_t[0:6],
                         plot_over_timestamps=True, 
                         color=self.colors['gnss'], **plot_kwargs)
         
         #imu
         axes_t[6].set_title('Onboard IMU (BNO086)')
         feat_imu = ['psi_can', 'gyroz_can', 'phi_can', 'gyrox_can', 'ay_can', 'az_can']
-        self.trk_raw.plot(features=feat_imu, axes = axes_t[6:12],
+        self.data_raw.plot(features=feat_imu, axes = axes_t[6:12],
                 plot_over_timestamps=True, 
                 color=self.colors['imu'], **plot_kwargs)
         
         #steer encoder
         axes_t[12].set_title('Steer Encoder')
         feat_enc = ['delta_can', 'ddelta_can']
-        self.trk_raw.plot(features=feat_enc, axes = axes_t[12:14],
+        self.data_raw.plot(features=feat_enc, axes = axes_t[12:14],
                 plot_over_timestamps=True, 
                 color=self.colors['steer_encoder'], **plot_kwargs)
 
         #wheelspeed sensor
         axes_t[14].set_title('Wheelspeed sensor (rear)')
         feat_wsp = 'vrws_can'
-        self.trk_raw.plot(features=feat_wsp, axes = axes_t[14],
+        self.data_raw.plot(features=feat_wsp, axes = axes_t[14],
                         plot_over_timestamps=True, 
                         color=self.colors['wheelspeed'], **plot_kwargs)
             
@@ -715,7 +713,7 @@ class BalanceAssistLogDataManager(DataManager):
                  path_gnss_report,
                  bike_geometry, 
                  dbc_file=None, 
-                 steer_angle_bias = 19.5,
+                 steer_angle_bias = 0,
                  circumfence_rear_wheel = 221,
                  ins_filename_suffix = "-ins"):
         """
@@ -733,8 +731,7 @@ class BalanceAssistLogDataManager(DataManager):
             InstrumentedBikeGeometry for coordinate transformations.
         steer_angle_bias : float, optional
             The steer encoder typically shows a constant bias. If this is 
-            known, it can be specified here in degrees. The default (often close) is 
-            19.5 deg.
+            known, it can be specified here in degrees. The default is 0 deg.
         circumfence_rear_wheel : float, optional
             The circumfence of the rear wheel in cm. The default is 
             221 cm. This can be adjusted to account for rider weight and
