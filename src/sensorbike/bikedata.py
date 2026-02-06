@@ -58,7 +58,7 @@ class InstrumentedBicycleData():
         dir_base,
         experiment_name,
         trial_name,
-        gnss_position_params = dict(h_gnss=1.08, l_gnss=0.16),
+        geometry_params = None,
         filename_can = None,
         t_s = 0.01,
         subdir_bike_gnss_solution=None,
@@ -105,12 +105,14 @@ class InstrumentedBicycleData():
             Name of the experiment / subdirectory of the data.
         trial_name : str
             An arbitrary name for this trial.
-        gnss_position_params : dict, optional
-            A dictionary describing the position of the GNSS antenna:
-                hb : height [m] of the GNSS antenna above ground when the bicycle is upright. Default is 1.08 m
-                lb : horizontal distance [m] between GNSS antenna and the rear wheel contact patch. Default is 0.16 m
-            The default corresponds to the setup used for the interaction experiment (with antenna post). The parameters
-            for the zigzag experiment (without antenna post) are (0.94, 0.17).
+        geometry_params : dict, optional
+            A dictionary describing the position of the GNSS antenna and bicycle IMU:
+                h_gnss : distance [m] between GNSS antenna and the rear-wheel contact point in B.z direction (vertical). Default is -1.08 m
+                l_gnss : distance [m] between GNSS antenna and the rear-wheel contact point in B.x direction (horizontal). Default is -0.16 m
+                h_imu  : distance [m] between the onboard IMU and the rear-wheel contact point in B.z direction (vertical). Default is -0.82 m
+                l_imu : distance [m] between the onboard IMU and the rear-wheel contact point in B.x direction (horizontal). Default is 0 m
+            The default corresponds to the setup used for the interaction experiment (GNSS with wooden antenna post). 
+            Use sensorbike.geometry.get_geometry_params() for different configurations that have been used before. 
         filename_can : str, optional
             The filname (or sub-path) of a specific (coded or decoded) CAN log file. 
             Can be a decoded log in .parquet format or coded logs in .MF4/.txt format. If 
@@ -195,7 +197,7 @@ class InstrumentedBicycleData():
         self.reference_location = reference_location
         
         # bicycle geometry
-        self.bike_geom = InstrumentedBikeGeometry(gnss_position_params)
+        self.bike_geom = InstrumentedBikeGeometry(geometry_params=geometry_params)
 
         # data
         self.bike_gnss_data = None
@@ -1128,7 +1130,7 @@ class BicycleStates(Track):
 
         return axes
     
-    
+
     def plot_xy(self, ax=None, **kwargs):
 
         ax = super().plot_xy(ax, **kwargs)

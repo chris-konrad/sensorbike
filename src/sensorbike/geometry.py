@@ -5,6 +5,7 @@ import sympy.physics.mechanics as me
 
 from trajdatamanager.datamanager import Track
 
+
 class InstrumentedBikeGeometry:
     """ A class that describes the geometry of the instrumented bicycle and 
     provides functions to transform sensor measurements to bicycle coordinates.
@@ -39,20 +40,24 @@ class InstrumentedBikeGeometry:
     This class was derived from rcid.utils by Christoph M. Konrad.
     """
     
-    def __init__(self, bike_params):
+    def __init__(self, geometry_params=None):
         """
-        Create and InstrumentedBikeGeometry object. 
+        Create an InstrumentedBikeGeometry object. 
         
-        bike_params : dict
-            A dictionary containing the bicycle dimensions. Must contain the 
-            dimensions: 
-                h_gnss : height of the GNSS antenna above ground when the
-                bicycle is upright.
-                l_gnss : horizontal distance between GNSS antenna and the rear
-                wheel contact patch. 
+        geometry_params : dict, optional
+            A dictionary describing the position of the GNSS antenna and bicycle IMU:
+                h_gnss : distance [m] between GNSS antenna and the rear-wheel contact point in B.z direction (vertical). Default is -1.08 m
+                l_gnss : distance [m] between GNSS antenna and the rear-wheel contact point in B.x direction (horizontal). Default is -0.16 m
+                h_imu  : distance [m] between the onboard IMU and the rear-wheel contact point in B.z direction (vertical). Default is -0.82 m
+                l_imu : distance [m] between the onboard IMU and the rear-wheel contact point in B.x direction (horizontal). Default is 0 m
+            The default corresponds to the setup used for the interaction experiment (GNSS with wooden antenna post). 
+            Use sensorbike.geometry.get_geometry_params() for different configurations that have been used before.
         """
 
-        self.params = bike_params
+        if geometry_params is None:
+            self.params = get_geometry_params()
+        else:
+            self.params = geometry_params
 
         self._init_can_transformations()
         self._init_gnss2rwcp_transformations()
@@ -92,9 +97,9 @@ class InstrumentedBikeGeometry:
         Prwcp = me.Point('P_rwcp')
         Prwcp.set_pos(O, x * N.x + y * N.y)
         Pgnss = me.Point('P_gnss')
-        Pgnss.set_pos(Prwcp, - l_gnss * B.x - h_gnss * B.z)
+        Pgnss.set_pos(Prwcp, l_gnss * B.x + h_gnss * B.z)
         Pimu = me.Point('P_imu')
-        Pimu.set_pos(Prwcp, - l_imu * B.x - h_imu * B.z)
+        Pimu.set_pos(Prwcp, l_imu * B.x + h_imu * B.z)
 
         frames = (E, N, B, Sgnss, Simu)
         states = (x, y, psi, v, phi, delta, psidot, phidot, deltadot)
@@ -303,3 +308,37 @@ class InstrumentedBikeGeometry:
                 eps = np.zeros((states.shape[0], 3))
 
         return self._eval_states2can(states, eps)
+    
+
+def get_geometry_params(setup='interaction2024'):
+    """Get the geometry parameters for different IMU/GNSS mounting positions.
+    Choose between the setup used for different experiments.
+
+    Setups:
+    -------
+    interaction2024 : GNSS mounted on a small wooden pole on the bicycle rack. 
+    Used in https://resolver.tudelft.nl/uuid:092f3b70-2d97-436e-b193-139a593e09c7
+
+    zigzag2024 : GNSS mounted on a small box on the rack of the bicycle.
+    Used in https://engrxiv.org/preprint/view/6107/version/7996
+    
+    Parameters
+    ----------
+    setup : str
+        One of 'interaction2024' or 'zigzag2024'. Default is 'interaction2024'
+
+    Returns
+    -------
+    geometry_params : dict
+        The geometry parameter dict containing the GNSS (h_gnss, l_gnss) and IMU locataion
+        (h_imu, l_imu).
+    """
+    
+
+    gnss_mounting_positions = {
+        'interaction2024': dict(h_gnss=-1.08, l_gnss=-0.16),
+        'zigzag2024': dict(h_gnss=-0.94, l_gnss=-0.17)}
+
+    imu_mounting_position = dict(h_imu=-0.82, l_imu=-0)
+
+    return gnss_mounting_positions[setup] | imu_mounting_position
