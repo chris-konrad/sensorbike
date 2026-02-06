@@ -25,6 +25,8 @@ import numpy as np
 import pandas as pd
 import datetime as dt
 
+from matplotlib.offsetbox import AnchoredText
+
 from scipy.signal import correlate
 from sklearn.linear_model import RANSACRegressor
 from pathlib import Path
@@ -68,7 +70,7 @@ class InstrumentedBicycleData():
         gnss_data_settings = {},
         can_data_settings = {},
         transfrom_to_rwcontactpoint = True,
-        reference_frame = 'E', 
+        reference_frame = 'N', 
     ):
         """
         Create a InstrumentedBicycleData object.
@@ -145,12 +147,12 @@ class InstrumentedBicycleData():
             Transform GNSS locations to the rear-wheel contact point of the 
             bicycle. The default is True.
         reference_frame : str, optional
-            The frame to represent the data in. Choose from 'E' and 'N'. The 
+            The frame to represent filtered bicycle states in. Choose from 'E' and 'N'. The 
             N-frame is the frame with x and y directions fixed to the ground and z pointing
             into the ground (as common in bicycle dynamic research and used for the Carvallo-Whipple model). 
             The E-frame is the frame with x and y directions fixed to the ground 
             and z pointing upwards (as common in traffic engineering and used for 
-            cyclistsocialforces). The default is 'E'. 
+            cyclistsocialforces). The default is 'N'. 
         """
 
         # set up paths and directories
@@ -628,8 +630,9 @@ class InstrumentedBicycleData():
         convergence_period = int(round(self.filter_settings['convergence_period'] / self.t_s))
         self.states_filtered = BicycleStates(f"Filtered states {self.name}", self.trk_raw.t[convergence_period:],
                                              states_smoothed[convergence_period:,:9], reference_frame='N', metadata=metadata)
+        self.states_filtered = self.states_filtered.transform_reference(self.reference_frame)
         self.states_filtered.figures = figs
-
+        
         if verbose:
             print("done!")
     
@@ -1120,7 +1123,19 @@ class BicycleStates(Track):
         for i, ax in enumerate(axes):
             ax.set_ylabel(f"{features[i]} [{units[i]}]")
 
+        frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
+        axes[0].add_artist(frametext)       
+
         return axes
+    
+    
+    def plot_xy(self, ax=None, **kwargs):
+
+        ax = super().plot_xy(ax, **kwargs)
+
+        frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
+        ax.add_artist(frametext)
+        return 
 
 
 def to_continous_angle(angle, tol = 0.75):
