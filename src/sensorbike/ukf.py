@@ -540,7 +540,8 @@ def filter(measurements, uncertainties_gnss,
 
         x0[0] = m[0]    #x 
         x0[1] = -m[1]   #y: flip due to E<->N conversion
-        x0[2] = np.arctan2(-m[3], m[2]) #psi: flip vy due to E<->N conversion
+        if np.all(np.isfinite(m[2:4])):
+            x0[2] = np.arctan2(-m[3], m[2]) #psi: flip vy due to E<->N conversion
         x0[3] = m[10]   #v
         x0[4] = 0       #phi: could be anything
         x0[5] = m[4]    #delta
@@ -552,7 +553,10 @@ def filter(measurements, uncertainties_gnss,
         P0 = np.zeros((x0.size, x0.size), dtype=float) 
 
         P0[:2,:2] = R0[:2,:2] + [[u[0], u[4]], [u[4], u[1]]] #x,y: gnss measurement uncertainty
-        P0[2,2] = (m[2]**2 * P0[0,0] + m[3]**2 * P0[1,1] - 2 * m[2] * m[3] * P0[0,1]) /  (m[2]**2+m[3]**2 + 1e-12) #psi: error propagation through arctan
+        if np.all(np.isfinite(m[2:4])): 
+            P0[2,2] = 6 * (m[2]**2 * P0[0,0] + m[3]**2 * P0[1,1] - 2 * m[2] * m[3] * P0[0,1]) /  (m[2]**2+m[3]**2 + 1e-12) #psi: error propagation through arctan
+        else:
+            P0[2,2] = np.deg2rad(180)**2
         P0[3,3] = R0[10,10]  #         v
         P0[4,4] = np.deg2rad(5)**2     #phi: could be anything
         P0[5,5] = R0[4,4]              #delta
@@ -586,13 +590,14 @@ def filter(measurements, uncertainties_gnss,
     ukf.P = P0
     ukf.Q = Q
     
-    states_filtered = np.zeros((n_samples+1, n_states))
+    states_filtered = np.empty((n_samples+1, n_states))
     states_filtered[0,:] = x0
     
-    covs_filtered = np.zeros((n_samples+1, ukf.P.shape[0], ukf.P.shape[1]))
+    covs_filtered = np.empty((n_samples+1, ukf.P.shape[0], ukf.P.shape[1]))
     covs_filtered[0,:,:] = ukf.P
 
-    state_measurements = []
+    measurement_estimates = np.empty((n_samples, R.shape[0]), dtype=float)
+    measurement_estimate_uncertainties = np.empty((n_samples, R.shape[0], R.shape[1]), dtype=float)
 
     # filter measurements 
     for i in range(n_samples):
@@ -609,15 +614,13 @@ def filter(measurements, uncertainties_gnss,
                    estimate_gyro_biases=estimate_gyro_biases,
                    estimate_imu_orient_misalignment=estimate_imu_orient_misalignment)
 
-        state_measurements.append(measure(ukf.x, bicycle_geometry, 
-                                          estimate_gyro_biases=estimate_gyro_biases,
-                                          estimate_imu_orient_misalignment=estimate_imu_orient_misalignment))
+        if plot_measurement_error:
+            measurement_estimates[i, :] = m - ukf.y
+            measurement_estimate_uncertainties[i, :, :] = ukf.S
         
         states_filtered[i+1,:] = ukf.x
         covs_filtered[i+1,:,:] = ukf.P
 
-    states_filtered = np.array(states_filtered)
-    state_measurements = np.array(state_measurements)
         
     # smooth filtered states using an Rauch-Tung-Striebel smoother. 
     if smooth:
@@ -628,7 +631,7 @@ def filter(measurements, uncertainties_gnss,
         states_smoothed[:, 3] = states_filtered[:, 3]
     
     if plot_meas_error:
-        fige, axese = plot_measurement_error(measurements, state_measurements)
+        fige, axese = plot_measurement_error(measurements, uncertainties_gnss, R, measurement_estimates, measurement_estimate_uncertainties)
     if plot:
         figxy, axxy = plot_filter_result_xy(measurements, states_filtered, covs_filtered, states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
         fig_bike, axes_bike, fig_supp, axes_supp = plot_filter_result_t(measurements, states_filtered, covs_filtered,states_smoothed=states_smoothed, covs_smoothed=covs_smoothed)
@@ -644,7 +647,9 @@ def filter(measurements, uncertainties_gnss,
     return out
     
 
-def plot_measurement_error(measurements, state_measurements):
+def plot_measurement_error(measurements, uncertainties_gnss, R, measurement_estimates, measurement_estimate_uncertainties):
+    col_measured = "#00A6D6"
+    col_filtered = "#FFB81C"
 
     features = ['x', 'y', 'vx', 'vy', 'delta', 'deltadot', 'gyrox', 'gyroz', 'ay', 'az', 'v']
 
@@ -655,10 +660,24 @@ def plot_measurement_error(measurements, state_measurements):
     fig, axes = plt.subplots(measurements.shape[1], 1, sharex=True, layout='constrained')
     for i in range(measurements.shape[1]):
         axes[i].grid()
-        fin = np.isfinite(measurements[:,i])
-        axes[i].plot(t[fin], measurements[fin,i], **style, label='measured')
-        axes[i].plot(state_measurements[:,i], **style, label='estimated')
         axes[i].set_ylabel(features[i])
+
+        fin = np.isfinite(measurements[:,i])
+        fin_e = fin[1:]
+        if i<4:
+            sigma_m = np.sqrt(uncertainties_gnss[fin, i]) 
+        else:
+            sigma_m = np.sqrt(R[i,i])
+        axes[i].fill_between(t[fin], measurements[fin,i] - sigma_m, 
+                                     measurements[fin,i] + sigma_m,
+                                     color=col_measured, alpha=0.3)
+        axes[i].plot(t[fin], measurements[fin,i], **style, label='measured', color=col_measured)
+                                                
+        sigma_e = np.sqrt(measurement_estimate_uncertainties[fin_e,i,i])
+        axes[i].fill_between(t[1:][fin_e], measurement_estimates[fin_e,i] - sigma_e, 
+                                           measurement_estimates[fin_e,i] + sigma_e,
+                                           color=col_filtered, alpha=0.3)
+        axes[i].plot(t[1:], measurement_estimates[:,i], **style, label='estimated', color=col_filtered)
 
     axes[0].legend()
     axes[0].set_title("gnss")
