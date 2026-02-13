@@ -144,9 +144,6 @@ class InstrumentedBicycleData():
             See the output of sensorbike.ukf.get_default_filter_settings()
             for details on the expected format. If None, 
             the output of this function is used. The default is None.
-        transfrom_to_rwcontactpoint : bool, optional
-            Transform GNSS locations to the rear-wheel contact point of the 
-            bicycle. The default is True.
         desired_reference_frame : str, optional
             The frame to represent filtered bicycle states in. Choose from 'E' and 'N'. The 
             N-frame is the frame with x and y directions fixed to the ground and z pointing

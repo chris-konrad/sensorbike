@@ -26,6 +26,8 @@ class InstrumentedBikeGeometry:
         Sgnss.x and Sgnss.y are parallel to the ground and Sgnss.z is parallel
         to E.z. This ignores velocity in E.z direction, coming from the height
         of the GNSS changing when the bicycle tilts.
+    Simu : The reference frame of the IMU velocities. Simu equals B save for small 
+        rotations eps_x, eps_y, epx_z to account for IMU misalignment. 
 
 
     Reference Locations

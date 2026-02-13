@@ -96,7 +96,54 @@ Corrections to the GNSS data must be applied separately and externally to this t
 You can either run the full pipeline or individual steps.
 
 ### Full data processing
-The most basic usage is demonstrated by `example_full-pipeline.py` in the example toolbox. This includes a example `yaml` file for coniguration. More instructions and examples will follow ...
+The most basic usage is demonstrated by `example_full-pipeline.py` in the example toolbox. This includes a example `yaml` file for configuration. 
+A typical processing pipeline will consist of:
+
+1. Create an `sensorbike.bikedata.InstrumentedBicycleData()` object with the preferences of your choice. See the docstring for help.
+```python
+from sensorbike.bikedata import InstrumentedBicycleData()
+
+dir_base = "path/to/your/data/"
+experiment_name = "exp1"  # subfolder to process 
+trial_name = "any-name-you-desire"
+
+bikedata = InstrumentedBicycleData(dir_base, experiment_name, trial_name)
+```
+2. Load raw data. This automatically performs time synchronization and returns a Track object with the raw sensor data in their own reference frame. 
+```python
+data_raw = bikedata.load_raw()
+```
+
+3. Apply Kalman filter to retrieve bicycel states.
+```python
+states_filtered = bikedata.get_bicyclestates_filtered()
+```
+
+Check out the keyword-arguments of `InstrumentedBicycleData` for an overview how to customize the tool. 
+
+### Reference Frames
+
+Several reference frames are within this repository. The complete list is below. 
+You can select if you prefer the bicycle states to be expressed in the E-frame or the N-frame
+using the `desired_reference_frame` kwarg of `InstrumentedBicycleData` a `BicycleStates` Track object can be 
+transformed from E to N or inverse using `BicycleStates.transform_reference()`.
+    B : Attached to the Frame of the bicycle, with B.x pointing forward, 
+        B.y pointing to the right and B.z pointing downwards such that 
+        B.x is parallel to the ground and B.z is parallel to gravity when
+        the bicycle is upright. 
+    N : The local reference frame as commonly defined in bicycle dynamics.
+        N.x and N.y are fixed to the road surface and N.z points downwards.
+    E : The local reference frame as commonly defined in traffic simulation.
+        E.x and E.y are fixed to the road surface and E.z points upwards. 
+        E.x and N.x are parallel. 
+    Sgnss : The reference frame of the GNSS velocity. Sgnss.x equals the
+        direction of the GNSS velocity vector derived from x-y coordinates.
+        Sgnss.x and Sgnss.y are parallel to the ground and Sgnss.z is parallel
+        to E.z. This ignores velocity in E.z direction, coming from the height
+        of the GNSS changing when the bicycle tilts.
+    Simu : The reference frame of the IMU velocities. Simu equals B save for small 
+        rotations eps_x, eps_y, epx_z to account for IMU misalignment. 
+
 
 ### Decoding CAN-files only
 You can decode and import CAN logs into a python environment without using the full data processing pipeline. For this, you need the filepath to the CAN file and the `.dbc` database definition. `sensorbike.canbus.process_can()` automatically detects if the logs are created from the CAN Edge 2 logger (`.mf4`) or the CL2000 logger (`.txt`), extracts can messages and stores the IMU, wheelspeed, and steer encoder measurements in a pandas dataframe. 

@@ -25,7 +25,7 @@ def main():
     filter_settings = parse_filter_settings(config['filter_settings'])
     
     #create a bicycle data object
-    dataman = InstrumentedBicycleData(
+    bikedata = InstrumentedBicycleData(
         os.path.join(cfd, config['general']['dir_base']),
         config['general']['experiment_name'],
         config['general']['trial_name'],
@@ -38,11 +38,12 @@ def main():
     t_begin = dt.datetime(2024, 8, 7, 16, 23, 0, tzinfo=dt.timezone.utc)
     t_end = dt.datetime(2024, 8, 7, 16, 23, 30, tzinfo=dt.timezone.utc)
     
-    #load the data
-    trk_raw = dataman.load(t_begin=t_begin, t_end=t_end)
-    
-    #filter the data with default settings
-    trk_filtered = dataman.apply_filter()
+    #load the raw data sensor. Performs time synchronization.
+    data_raw = bikedata.load_raw(t_begin=t_begin, t_end=t_end, plot=True)
+
+    #Run the Kalman Filter to estimate the bicycle states from the raw sensor data
+    states_filtered = bikedata.get_bicyclestates_filtered(plot=True)
+
 
 if __name__ == "__main__":
     main()
