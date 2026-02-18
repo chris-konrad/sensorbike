@@ -20,20 +20,25 @@ pipeline only.
 
 ## Installation
 
-Install the package and it's dependencies. Refer to `pyproject.toml` for an overview of the dependencies. 
+Below are the basic steps to install `sensorbike` in it's own virtual environment. Adapt as necessary to using within your own project. 
+If you are new to Python and wonder what a virtual environment is, have a look [here](https://realpython.com/ref/best-practices/virtual-environments/) and [here](https://realpython.com/ref/tools/conda/). You may get (mini)conda from [here](https://www.anaconda.com/docs/getting-started/miniconda/install).
 
-1. Install [`trajdatamanager`](https://github.com/chris-konrad/trajdatamanager). See the repository for installation instructions. This is only required if you use the `bikedata` module. If you only want to decode CAN logs, you may skip this step. 
-
-2. Clone this repository.
-   
+1. Clone this repository and enter the repo folder.
    ```bash
-   git clone 
+   git clone https://github.com/chris-konrad/sensorbike.git
+   cd sensorbike
    ```
 
-3. Install `sensorbike`. 
-   
+2. If using conda, create a virtual environment and activate it. 
+    ```bash
+    conda env create -f environment.yml
+    conda activate sensorbike
+    ```
+
+3. Install [`trajdatamanager`](https://github.com/chris-konrad/trajdatamanager). See the repository for installation instructions. This is only required if you use the `bikedata` module. If you only want to decode CAN logs, you may skip this step. 
+
+4. Install `sensorbike`.    
    ```bash
-   cd sensorbike
    pip install .
    ```
 
@@ -56,7 +61,6 @@ Their onboard unit publishes measurements from the following sensors on the bike
 Both CAN loggers in the lab inventory are supported the CSS Electronics [CANedge2](https://www.csselectronics.com/products/can-bus-data-logger-wifi-canedge2) and [CL2000](https://www.csselectronics.com/products/can-bus-logger-interface-cl2000).
 
 Additionally, a [SWIFTNAV Piksi Multi RTK GNSS]([Swift Navigation Support](https://support.swiftnav.com/support/solutions/articles/44001850752-piksi-multi-getting-started-guide)) can be mounted on the rack of the bikes. In conjunction with correction data from the fixed receiver of the [Dutch Permanent GNSS Array (DPGA)]([Dutch Permanent GNSS Array (DPGA)](https://gnss1.tudelft.nl/dpga/)) mounted on the EWI-tower, this adds high-precision localization to the bicycles. 
-
 
 
 ### Data Aquisition and Archiving
