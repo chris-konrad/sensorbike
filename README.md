@@ -34,7 +34,7 @@ If you are new to Python and wonder what a virtual environment is, have a look [
     conda activate sensorbike
     ```
 
-3. Manually install `trajdatamanager` following the steps below. First, clone latest version of `trajdatamanager` from https://github.com/chris-konrad/trajdatamanager. 
+3. Manually install `trajdatamanager` following the steps below. First, clone latest version of `trajdatamanager` from https://github.com/chris-konrad/trajdatamanager. You may skip this step if you only want to do CAN decoding. 
     ```bash
     git clone https://github.com/chris-konrad/trajdatamanager.git
     ```
