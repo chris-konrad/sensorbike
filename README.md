@@ -34,11 +34,11 @@ If you are new to Python and wonder what a virtual environment is, have a look [
     conda activate sensorbike
     ```
 
-3. Manually install `trajdatamanager` following the steps below. First, clone latest version of trajdatamanager from https://github.com/chris-konrad/trajdatamanager. 
+3. Manually install `trajdatamanager` following the steps below. First, clone latest version of `trajdatamanager` from https://github.com/chris-konrad/trajdatamanager. 
     ```bash
     git clone https://github.com/chris-konrad/trajdatamanager.git
     ```
-    If you plan to use the development branch of `sensorbike`, also checkout to the development branch of `trajdatamanager` using the commands below. If you plan to use the latest release (main branch), skip the steps below.
+    If you plan to use the development branch of `sensorbike`, you must also switch to the development branch of `trajdatamanager` using the commands below. If you plan to use the latest release (main branch), skip the commands below.
     ```bash
     cd sensorbike
     git checkout development
@@ -48,7 +48,7 @@ If you are new to Python and wonder what a virtual environment is, have a look [
     ```
     Finally, install `trajdatamanager`
     ```
-    pip install /trajdatamanager/.
+    pip install trajdatamanager/.
     ```
 
 4. Finally, install `sensorbike`. Optional dependencies are required for decoding CAN messages. 
@@ -58,15 +58,15 @@ If you are new to Python and wonder what a virtual environment is, have a look [
    ```
    If you plan to decode CAN messages logged by the CAN Edge 2 logger, CAN CL2000 logger, or both use one of the following:
    ```bash
-   pip install .[canedge2] 
+   pip install sensorbike/.[canedge2] 
    ```
    or
    ```bash
-   pip install .[cl2000] 
+   pip install sensorbike/.[cl2000] 
    ```
    or 
    ```bash
-   pip install .[canedge2, cl2000] 
+   pip install sensorbike/.[canedge2, cl2000] 
    ```
 
 Now you are ready start! 
