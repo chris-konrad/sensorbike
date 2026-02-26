@@ -26,21 +26,50 @@ If you are new to Python and wonder what a virtual environment is, have a look [
 1. Clone this repository and enter the repo folder.
    ```bash
    git clone https://github.com/chris-konrad/sensorbike.git
-   cd sensorbike
    ```
 
-2. If using conda, create a virtual environment and activate it. 
+2. Create a virtual environment and activate it.
     ```bash
-    conda env create -f environment.yml
+    conda env create -f sensorbike/environment.yml
     conda activate sensorbike
     ```
 
-3. Install [`trajdatamanager`](https://github.com/chris-konrad/trajdatamanager). See the repository for installation instructions. This is only required if you use the `bikedata` module. If you only want to decode CAN logs, you may skip this step. 
+3. Manually install `trajdatamanager` following the steps below. First, clone latest version of trajdatamanager from https://github.com/chris-konrad/trajdatamanager. 
+    ```bash
+    git clone https://github.com/chris-konrad/trajdatamanager.git
+    ```
+    If you plan to use the development branch of `sensorbike`, also checkout to the development branch of `trajdatamanager` using the commands below. If you plan to use the latest release (main branch), skip the steps below.
+    ```bash
+    cd sensorbike
+    git checkout development
+    cd ../trajdatamanager
+    git checkout development
+    cd ..
+    ```
+    Finally, install `trajdatamanager`
+    ```
+    pip install /trajdatamanager/.
+    ```
 
-4. Install `sensorbike`.    
+4. Finally, install `sensorbike`. Optional dependencies are required for decoding CAN messages. 
+   If you do not plan to decode CAN messages, run:
    ```bash
    pip install .
    ```
+   If you plan to decode CAN messages logged by the CAN Edge 2 logger, CAN CL2000 logger, or both use one of the following:
+   ```bash
+   pip install .[canedge2] 
+   ```
+   or
+   ```bash
+   pip install .[cl2000] 
+   ```
+   or 
+   ```bash
+   pip install .[canedge2, cl2000] 
+   ```
+
+Now you are ready start! 
 
 ## Getting Data and Preprocessing
 
