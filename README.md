@@ -64,9 +64,9 @@ If you are new to Python and wonder what a virtual environment is, have a look [
    ```bash
    pip install sensorbike/.[cl2000] 
    ```
-   or 
+   or (careful, no space!)
    ```bash
-   pip install sensorbike/.[canedge2, cl2000] 
+   pip install sensorbike/.[canedge2,cl2000] 
    ```
 
 Now you are ready start! 
@@ -192,13 +192,15 @@ df = can.process_can(
 Additionally, this package includes the script `scripts/decode_can.py` that decodes CAN log files and exports them to csv or parquet. 
 Use it as below and call `--help` for more info on the arguments. 
 ```
-> python decode_can.py decode_can.py [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m]
+> python decode_can.py decode_can.py [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m] [-k {kinematics, messages, all}]
 ```
 It supports:
 - automatically decoding from CAN Edge 2 and CL 2000
-- recursive and non-recursive search for log files (`--nonrecursive`)
-- ignoring files for which a decoded output alread exists (`--ignoreexisting`)
-- export to `.parquet` for efficient data storage in a binary format and `.csv` for human-readble text files. 
+- recursive and non-recursive search for log files (`--nonrecursive`).
+- ignoring files for which a decoded output alread exists (`--ignoreexisting`).
+- appending multiple can log files to the same output (`--append`)
+- export to `.parquet` for efficient data storage in a binary format and `.csv` for human-readble text files (`--files`).
+- extracting online kinematic measurements, status messages, or both (`--keys`).
 
 ## Authors
 

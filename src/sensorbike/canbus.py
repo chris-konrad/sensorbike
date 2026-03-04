@@ -338,26 +338,40 @@ def process_can_cl2000(dbc_file, log_file):
     return df_log
 
 
-def rename_canlog_columns(df):
-    """ Rename the can-log columns to more descriptive names incl. units.
-    """
-    MEASUREMENTS_TO_EXTRACT = {
-        'gyro_z': 'gyro_z_rad/s',
-        'gyro_y': 'gyro_y_rad/s',
-        'gyro_x': 'gyro_x_rad/s',
-        'accel_z': 'accel_z_m/s2', 
-        'accel_y': 'accel_y_m/s2',
-        'accel_x': 'accel_x_m/s2',
-        'yaw': 'yaw_rad',
-        'pitch': 'pitch_rad',
-        'roll': 'roll_rad',
-        'ws_rear': 'wheelspeed_rear_rev/s',
-        'LWS_ANGLE': 'steer_deg',
-        'LWS_SPEED': 'steer_rate_deg/s',
-    }
+def extract_canlog_columns(df, mode):
+    """ Extract canlog columns and rename to more descriptive names incl. units.
 
-    df = df[list(MEASUREMENTS_TO_EXTRACT.keys())]
-    df = df.rename(MEASUREMENTS_TO_EXTRACT)
+    Pick one of three modes:
+    - kinematics: Extract only kinematics (default)
+    - status_messages: Extract status messages
+    - all: Extract both
+
+    """
+    colums_kinematic = {
+            'gyro_z': 'gyro_z_rad/s',
+            'gyro_y': 'gyro_y_rad/s',
+            'gyro_x': 'gyro_x_rad/s',
+            'accel_z': 'accel_z_m/s2', 
+            'accel_y': 'accel_y_m/s2',
+            'accel_x': 'accel_x_m/s2',
+            'yaw': 'yaw_rad',
+            'pitch': 'pitch_rad',
+            'roll': 'roll_rad',
+            'ws_rear': 'wheelspeed_rear_rev/s',
+            'LWS_ANGLE': 'steer_deg',
+            'LWS_SPEED': 'steer_rate_deg/s',
+        }
+
+    if mode == 'kinematics':
+        df = df[list(colums_kinematic.keys())]
+    elif mode == 'messages':
+        columns_status = [k for k in df if not k in colums_kinematic]
+        df = df[columns_status]
+    elif mode != 'all':
+        raise ValueError(f"Canlog extraction mode must be 'kinematics', 'messages' or 'all'. Instead it was '{mode}'")
+
+    df = df.rename(colums_kinematic)
+    
     return df
 
 

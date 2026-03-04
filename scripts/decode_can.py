@@ -36,6 +36,9 @@ def parse_args():
     parser.add_argument('-f', '--format', choices=['.csv', '.parquet'], default = '.csv',
                         help=('Output format. Choose ".csv" for human-readible files or ".parquet" for'
                               'memory efficiency.'))
+    parser.add_argument('-k', '--keys', choices=['kinematics', 'messages', 'all'], default='kinematics',
+                        help=("Data keys to extract from the log. 'kinematics' extracts only kinematic data. 'messages'"
+                              " extracts only system status messages. 'all' extracts both."))
     parser.add_argument('-m', '--mute', action='store_true', help='Mutes verbosity.')
     
     return parser.parse_args()
@@ -101,13 +104,13 @@ def main():
     if args.outdir == 'input directory' and not args.append:
         for f in filepaths_logs:
             filename_out = os.path.splitext(os.path.basename(f))[0]
-            filename_out += args.format
+            filename_out += "_" + args.keys + args.format
             filenames_out.append(filename_out)
     else:
         for f in filepaths_logs_rel:
             n0 = os.path.normpath(os.path.splitext(f)[0])
             n0 = n0.replace(os.sep, '-')
-            n0 = n0 + args.format
+            n0 = n0 + "_" + args.keys + args.format
             filename_out = n0
             filenames_out.append(filename_out)
 
@@ -121,12 +124,13 @@ def main():
 
     for dir_out, f, fname_out in zip(dirs_out, filepaths_logs, filenames_out):
             print(f"   {f}")
+            
             df_i = can.process_can(f, filepath_dbc)
+            df_i = can.extract_canlog_columns(df_i, args.keys)
 
             if args.append:
                 df_list.append(df_i)
             else:
-                df_i = can.rename_canlog_columns(df_i)
                 write(dir_out, df_i, fname_out, args.format, not args.mute)
 
     # append
