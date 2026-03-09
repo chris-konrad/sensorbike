@@ -126,6 +126,11 @@ def main():
             print(f"   {f}")
             
             df_i = can.process_can(f, filepath_dbc)
+
+            if df_i.shape[0] < 1:
+                print(f"Logfile '{f}' was empty!")
+                continue
+            
             df_i = can.extract_canlog_columns(df_i, args.keys)
 
             if args.append:
@@ -133,8 +138,12 @@ def main():
             else:
                 write(dir_out, df_i, fname_out, args.format, not args.mute)
 
+    if len(df_list) < 1:
+        print(f"All logfiles were empty!")
+        return
+
     # append
-    if args.append:
+    if args.append and len(df_list > 1):
         if not args.mute:
             print("   Appending logs ... ")
 
