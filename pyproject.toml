@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sensorbike"
 description = "Load and filter data collected from the Gazelle/Bosch Balance Assist Bicycles"
 readme = "README.md"
-version = "2.0.2"
+version = "2.0.3"
 license = {file = "LICENSE"}
 authors = [
 	{name = "Christoph M. Konrad", email = "c.m.konrad@tudelft.nl"},
