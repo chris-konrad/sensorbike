@@ -1013,7 +1013,7 @@ class BicycleStates(Track):
     FEATURES = ['x', 'y', 'psi', 'v', 'phi', 'delta', 'psidot', 'phidot', 'deltadot']
     REF_FRAMES = ['E', 'N']
 
-    def __init__(self, track_id, t, data, reference_frame, metadata={}):
+    def __init__(self, track_id, t, data, reference_frame, data_feature_keys=None, metadata=None):
         """Create a BicycleStates Track object.
         
         Parameters
@@ -1024,21 +1024,37 @@ class BicycleStates(Track):
             The timestamps of the N samples in the trajectory. Must be shaped (N,). Must be an array of Python datetime objects.
         data : array
             The data array shaped (N, 9) with the nine states [x, y, psi, v, phi, delta, psidot, phidot, deltadot]. Distances in m, 
-            speed in m/s, angles in rad and rates in rad/s.
+            speed in m/s, angles in rad and rates in rad/s. A subset of the nine states may be supplied. In this case, the states in
+            the second dimension must correspond to the lables of data_feature_keys.
         reference_frame : str
             The reference frame of the given data array. Data may be given in the 'N' frame, typically used for bicycle dynamics
             (N.x and N.y forming the ground plane, N.z pointing downwards), or the 'E' frame, common in traffic simulation (E.x and E.y 
             forming the ground plane, E.z pointing downwards). N is rotated by pi around E.x with respect to E. Additionally, 
             Steer angles and rates are mirrored: E_delta(dot) = - N_delta(dot).
+        data_feature_keys : list
+            List of states if data contains only a subset of the bicycle states. Must be a subset of [x, y, psi, v, phi, delta, psidot, phidot, deltadot]. 
+            Order must correspond to the order of columns in data. May be used if all 9 states are available but in different order. 
         """
 
         class_id = 2
         yaw_feature_index = 2
 
+        if data_feature_keys is not None:
+
+            if not np.all([f in self.FEATURES for f in data_feature_keys]):
+                raise ValueError((f"A BicycleStates Track object can only hold the features {self.FEATURES}. At least one of {data_feature_keys} is not allowed."))
+            if len(data_feature_keys) != data.shape[1]:
+                raise ValueError((f"Must supply the same number of data_feature_keys as columns in the data array."))
+        
+            data_full = np.full((data.shape[0], len(self.FEATURES)), np.nan)
+            for i, f in enumerate(data_feature_keys):
+                data_full[:, self.FEATURES.index(f)] = data[:,i]
+            data = data_full
+
         if not data.shape[1] == len(self.FEATURES):
             raise ValueError((f"A BicycleStates Track object must have {len(self.FEATURES)} features/states. ",
-                              f"The data array must be shaped (N, {len(self.FEATURES)}). Instead it was {data.shape}. "
-                              f"Please provide {self.FEATURES}!"))
+                              f"The data array must be shaped (N, {len(self.FEATURES)}) or a list of the subset of states in data must be supplied in data_feature_keys. Data shape was {data.shape}. "
+                              f"Please provide {self.FEATURES} or data_feature_keys!"))
         
         super().__init__(track_id, class_id, t, data, metadata, yaw_feature_index=yaw_feature_index, data_feature_keys=self.FEATURES)
 
