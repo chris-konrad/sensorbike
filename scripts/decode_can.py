@@ -122,6 +122,7 @@ def main():
         else:
             print("Decoding and writing ...")
 
+    n_empty = 0
     for dir_out, f, fname_out in zip(dirs_out, filepaths_logs, filenames_out):
             print(f"   {f}")
             
@@ -129,6 +130,7 @@ def main():
 
             if df_i.shape[0] < 1:
                 print(f"Logfile '{f}' was empty!")
+                n_empty += 1
                 continue
             
             df_i = can.extract_canlog_columns(df_i, args.keys)
@@ -137,13 +139,14 @@ def main():
                 df_list.append(df_i)
             else:
                 write(dir_out, df_i, fname_out, args.format, not args.mute)
-
-    if len(df_list) < 1:
+                
+    if n_empty >= len(filepaths_logs):
         print(f"All logfiles were empty!")
         return
-
+    
     # append
     if args.append and len(df_list > 1):
+
         if not args.mute:
             print("   Appending logs ... ")
 
