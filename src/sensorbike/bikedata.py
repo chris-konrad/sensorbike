@@ -396,8 +396,8 @@ class InstrumentedBicycleData():
                     break
             if len(can_files) == 0:
                 raise FileNotFoundError(f"Didn't find any CAN logs in {dir_can_log}! Searched for: {ftypes}")
-        elif os.path.isfile(self.filename_can):
-            can_files = [self.filename_can]
+        elif os.path.isfile(os.path.join(dir_can_log, self.filename_can, )):
+            can_files = [os.path.join(dir_can_log, self.filename_can)]
         else:
             FileNotFoundError(f"Can't find filename_can: {self.filename_can}")
 
@@ -954,11 +954,13 @@ class BalanceAssistLogDataManager(DataManager):
                 )
                 
                 if not os.path.isfile(path_timesync_source_alt):
-                    msg = (f"Can't find INS file in the given report directory!"
-                           f"Directory: {self.dir_gnss_report}"
-                           f"Looked for {path_timesync_source} and "
-                           f"{path_timesync_source_alt}")
-                    raise FileNotFoundError(msg)
+                    msg = (f"    Can't find INS file corresponding to {rname} in the report directory! Skipping {rname}.")
+                    print(msg)
+                    #       f"Directory: {self.dir_gnss_report}"
+                    #       f"Looked for {path_timesync_source} and "
+                    #       f"{path_timesync_source_alt}")
+                    # raise FileNotFoundError(msg)
+                    continue
                 else:
                     path_timesync_source = path_timesync_source_alt 
 
