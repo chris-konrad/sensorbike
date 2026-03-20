@@ -201,7 +201,7 @@ class InstrumentedBicycleData():
         if filter_settings is None:
             self.filter_settings = get_default_filter_settings()
         else:
-            self.filter_settings = filter_settings
+            self.filter_settings = get_default_filter_settings() | filter_settings
         
         # additional settings (i.e. keyword arguments for BalanceAssistDataManager and RTKLibDataManager)
         self.gnss_data_settings = gnss_data_settings
