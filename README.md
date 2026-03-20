@@ -122,14 +122,22 @@ here https://bicycleparameters.readthedocs.io/stable/gallery/examples/plot_balan
 
 ### Applying RTK-GNSS Corrections
 
-Corrections to the GNSS data must be applied separately and externally to this toolbox. Refer to [swiftnav-processing](https://github.com/chris-konrad/swiftnav_processing) for instructions and the necessary software. 
+Corrections to the GNSS data must be applied separately and externally to this toolbox. Refer to [rtkprocessing](https://github.com/chris-konrad/rtkprocessing) for instructions and the necessary software. 
 
 ## Using this toolbox
 
-You can either run the full pipeline or individual steps.
+This section explains how to use the full processing pipeline (import IMU and GNSS data + UKF state estimation) and how to perform stand-alone CAN log decoding. For standalone GNSS decoding and RTK-processing, visit [rtkprocessing](https://github.com/chris-konrad/rtkprocessing).
 
 ### Full data processing
-The most basic usage is demonstrated by `example_full-pipeline.py` in the example toolbox. This includes a example `yaml` file for configuration. 
+
+#### Demo
+The most basic usage is demonstrated by `demo/example_full-pipeline.py`. This includes a example `yaml` file for configuration. 
+Use it as below and call `--help` for more info on the arguments. Example data can be downloaded from https://doi.org/10.4121/f881dd80-b9f5-4322-9fd5-192034c9717f
+```
+> example_full-pipeline.py [--help] --datadir /path/to/the/toplevel/directory/of/the/example/data 
+```
+
+#### Using sensorbike in your own scripts
 A typical processing pipeline will consist of:
 
 1. Create an `sensorbike.bikedata.InstrumentedBicycleData()` object with the preferences of your choice. See the docstring for help.
@@ -137,7 +145,7 @@ A typical processing pipeline will consist of:
 from sensorbike.bikedata import InstrumentedBicycleData()
 
 dir_base = "path/to/your/data/"
-experiment_name = "exp1"  # subfolder to process 
+experiment_name = "exp1" # data subfolder to process 
 trial_name = "any-name-you-desire"
 
 bikedata = InstrumentedBicycleData(dir_base, experiment_name, trial_name)
@@ -156,7 +164,7 @@ Check out the keyword-arguments of `InstrumentedBicycleData` for an overview how
 
 ### Reference Frames
 
-Several reference frames are within this repository. The complete list is below. 
+Several reference frames are used within this repository. The complete list is below. 
 You can select if you prefer the bicycle states to be expressed in the E-frame or the N-frame
 using the `desired_reference_frame` kwarg of `InstrumentedBicycleData` a `BicycleStates` Track object can be 
 transformed from E to N or inverse using `BicycleStates.transform_reference()`.
@@ -179,6 +187,23 @@ transformed from E to N or inverse using `BicycleStates.transform_reference()`.
 
 
 ### Decoding CAN-files only
+You can decode CAN logs without using the full data processing pipeline. Use `scripts/decode_can.py` to decode and export to `.csv` or `.parquet`. Use `sensorbike.canbus.process_can()` to decode within your own scripts.
+
+#### Decode and export CAN logs to file.
+Additionally, this package includes the script `scripts/decode_can.py` that decodes CAN log files and exports them to csv or parquet. 
+Use it as below and call `--help` for more info on the arguments. 
+```
+> python decode_can.py [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m] [-k {kinematics, messages, all}]
+```
+It supports:
+- automatically decoding from CAN Edge 2 and CL 2000
+- recursive and non-recursive search for log files (`--nonrecursive`).
+- ignoring files for which a decoded output alread exists (`--ignoreexisting`).
+- appending multiple can log files to the same output (`--append`)
+- export to `.parquet` for efficient data storage in a binary format and `.csv` for human-readble text files (`--files`).
+- extracting online kinematic measurements, status messages, or both (`--keys`).
+
+#### Decode within your own scripts
 You can decode and import CAN logs into a python environment without using the full data processing pipeline. For this, you need the filepath to the CAN file and the `.dbc` database definition. `sensorbike.canbus.process_can()` automatically detects if the logs are created from the CAN Edge 2 logger (`.mf4`) or the CL2000 logger (`.txt`), extracts can messages and stores the IMU, wheelspeed, and steer encoder measurements in a pandas dataframe. 
 
 ```python
@@ -189,18 +214,6 @@ df = can.process_can(
 )
 ```
 
-Additionally, this package includes the script `scripts/decode_can.py` that decodes CAN log files and exports them to csv or parquet. 
-Use it as below and call `--help` for more info on the arguments. 
-```
-> python decode_can.py decode_can.py [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m] [-k {kinematics, messages, all}]
-```
-It supports:
-- automatically decoding from CAN Edge 2 and CL 2000
-- recursive and non-recursive search for log files (`--nonrecursive`).
-- ignoring files for which a decoded output alread exists (`--ignoreexisting`).
-- appending multiple can log files to the same output (`--append`)
-- export to `.parquet` for efficient data storage in a binary format and `.csv` for human-readble text files (`--files`).
-- extracting online kinematic measurements, status messages, or both (`--keys`).
 
 ## Authors
 
