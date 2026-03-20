@@ -231,7 +231,7 @@ def get_default_filter_settings():
                    "dpsi": float(np.deg2rad(20)),       # large uncertainties due to missing angular rates in gyroz measurement model
                    "dphi": float(np.deg2rad(15)),       # large uncertainties in roll and steer rates due to zero roll/steer torque assumption
                    "ddelta": float(np.deg2rad(40)),
-                   "v": 1,                              # large uncertainties in speed and acceleration due to const. accel. assumption                              
+                   "v": 1,                              # large uncertainties in speed due to constant speed assumption                              
                    "b_delta": float(np.deg2rad(0.01)),  # tiny, steer bias should be const.
                    "b_gyro": float(np.deg2rad(0.01)),   # unusedtiny, gyro bias should be const.
                    "eps": float(np.deg2rad(0.01))}      # tiny, imu<->bike rotation should be constant
@@ -296,8 +296,8 @@ def get_yaml_filter_settings(filter_settings_yaml_dict,
                            filter_settings_yaml_dict["integration_method"],
                        "bicycle_parameter_dict": bicycle_parameter_dict}
         
-    filter_settings['R'] = make_R(filter_settings_yaml_dict["measurement_noise_std"])
-    filter_settings['Q'] = make_Q(filter_settings_yaml_dict['process_noise_std'])
+    filter_settings['sensor_std'] = filter_settings_yaml_dict["measurement_noise_std"]
+    filter_settings['process_std'] = filter_settings_yaml_dict['process_noise_std']
         
     return filter_settings
     
@@ -538,8 +538,9 @@ def filter(measurements, uncertainties_gnss,
 
         x0 = np.zeros(n_states)
 
-        x0[0] = m[0]    #x 
-        x0[1] = -m[1]   #y: flip due to E<->N conversion
+        if np.all(np.isfinite(m[:2])):
+            x0[0] = m[0]    #x 
+            x0[1] = -m[1]   #y: flip due to E<->N conversion
         if np.all(np.isfinite(m[2:4])):
             x0[2] = np.arctan2(-m[3], m[2]) #psi: flip vy due to E<->N conversion
         x0[3] = m[10]   #v
@@ -552,7 +553,10 @@ def filter(measurements, uncertainties_gnss,
 
         P0 = np.zeros((x0.size, x0.size), dtype=float) 
 
-        P0[:2,:2] = R0[:2,:2] + [[u[0], u[4]], [u[4], u[1]]] #x,y: gnss measurement uncertainty
+        if np.all(np.isfinite(m[:2])):
+            P0[:2,:2] = R0[:2,:2] + [[u[0], u[4]], [u[4], u[1]]] #x,y: gnss measurement uncertainty
+        else:
+            P0[:2,:2] = 1e10 * np.eye(2)
         if np.all(np.isfinite(m[2:4])): 
             P0[2,2] = 6 * (m[2]**2 * P0[0,0] + m[3]**2 * P0[1,1] - 2 * m[2] * m[3] * P0[0,1]) /  (m[2]**2+m[3]**2 + 1e-12) #psi: error propagation through arctan
         else:
