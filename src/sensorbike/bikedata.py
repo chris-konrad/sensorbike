@@ -64,7 +64,7 @@ class InstrumentedBicycleData():
         subdir_bike_gnss_solution=None,
         subdir_bike_gnss_report=None,
         subdir_bike_can=None,
-        rotation = 64.318889,
+        rotation = 66.670445,
         reference_location = [51.999370, 4.370451, 43.72],
         filter_settings = None,
         gnss_data_settings = {},
@@ -131,8 +131,9 @@ class InstrumentedBicycleData():
             Subdirectory of the can-log. The default is 
             experiment_name//can-logger.
         rotation : float, optional
-            Rotation in deg of the local reference frame w.r.t North. 
-            The default is 67.
+            Rotation in deg of the local reference frame w.r.t East. 
+            The default is 66.670445, which aligns the local reference frame 
+            such that the long side of the IV test track points in x-direction.
         reference_location : list, optional
             Coordinates of the origin of of the local reference coordinate 
             system given as (lat[deg], long[deg], height[m]). The height is interpreted as the
