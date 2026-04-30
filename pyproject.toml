@@ -36,6 +36,9 @@ canedge2 = [
 	"asammdf"
 ]
 
+[project.scripts]
+decodecan = "sensorbike.scripts.decode_can:main"
 	
 [tool.setuptools.packages.find]
 where = ["src"]  
+

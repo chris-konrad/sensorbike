@@ -187,13 +187,13 @@ transformed from E to N or inverse using `BicycleStates.transform_reference()`.
 
 
 ### Decoding CAN-files only
-You can decode CAN logs without using the full data processing pipeline. Use `scripts/decode_can.py` to decode and export to `.csv` or `.parquet`. Use `sensorbike.canbus.process_can()` to decode within your own scripts.
+You can decode CAN logs without using the full data processing pipeline. Use CL program `decodecan` installed with this repository to decode and export to `.csv` or `.parquet`. Use `sensorbike.canbus.process_can()` to decode within your own scripts.
 
 #### Decode and export CAN logs to file.
-Additionally, this package includes the script `scripts/decode_can.py` that decodes CAN log files and exports them to csv or parquet. 
+Additionally, this package includes the program `decodecan` that decodes CAN log files and exports them to csv or parquet. 
 Use it as below and call `--help` for more info on the arguments. 
 ```
-> python decode_can.py [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m] [-k {kinematics, messages, all}]
+> decodecan [-h] -d DBC -l LOGS [-a] [-nr] [-i] [-o OUTDIR] [-f {.csv,.parquet}] [-m] [-k {kinematics, messages, all}]
 ```
 It supports:
 - automatically decoding from CAN Edge 2 and CL 2000
