@@ -1144,12 +1144,13 @@ class BicycleStates(Track):
         return axes
     
 
-    def plot_xy(self, ax=None, **kwargs):
+    def plot_xy(self, ax=None, draw_referenceframe=True, **kwargs):
 
         ax = super().plot_xy(ax, **kwargs)
 
-        frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
-        ax.add_artist(frametext)
+        if draw_referenceframe:
+            frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
+            ax.add_artist(frametext)
         return 
 
 
