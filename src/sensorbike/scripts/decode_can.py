@@ -193,7 +193,7 @@ def main():
             
             try:
                 df_i = can.extract_canlog_columns(df_i, args.keys)
-            except KeyError:
+            except Exception:
                 failed.append(rel_filepath)
                 n_failed += 1
                 continue
