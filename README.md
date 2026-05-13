@@ -202,6 +202,8 @@ It supports:
 - appending multiple can log files to the same output (`--append`)
 - export to `.parquet` for efficient data storage in a binary format and `.csv` for human-readble text files (`--files`).
 - extracting online kinematic measurements, status messages, or both (`--keys`).
+- copy the filesystem of the input directory to an output directory.
+- creates a decoding log.
 
 #### Decode within your own scripts
 You can decode and import CAN logs into a python environment without using the full data processing pipeline. For this, you need the filepath to the CAN file and the `.dbc` database definition. `sensorbike.canbus.process_can()` automatically detects if the logs are created from the CAN Edge 2 logger (`.mf4`) or the CL2000 logger (`.txt`), extracts can messages and stores the IMU, wheelspeed, and steer encoder measurements in a pandas dataframe. 
