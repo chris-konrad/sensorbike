@@ -97,7 +97,10 @@ def main():
     if args.outdir == 'input directory':
         dirs_out = [os.path.dirname(f) for f in filepaths_logs]
     else:
-        dirs_out = [str(args.outdir)] * len(filepaths_logs) 
+        dirs_out = []
+        for f in filepaths_logs:
+            rel_path = os.path.relpath(os.path.dirname(f), start=args.logs)
+        dirs_out.append(os.path.join(args.outdir, rel_path)) 
 
     # output names
     filenames_out = []
