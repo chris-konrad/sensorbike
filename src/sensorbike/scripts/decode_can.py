@@ -65,20 +65,20 @@ def write_decode_log(dir_out, df_summary, args):
         f.write(f"Timestamp: {timestamp}\n\n")
 
         f.write("Settings:\n")
-        f.write(f"    input directory: ../{os.path.basename(args.logs)}")
-        f.write(f"    output directory: ../{os.path.basename(dir_out)}")
-        f.write(f"    dbc-filename: {os.path.basename(args.dbc)}\n")
-        f.write(f"    append:       {args.append}\n")
-        f.write(f"    nonrecurcsive: {args.nonrecursive}\n")
-        f.write(f"    ignoreexisting: {args.ignoreexisting}\n")
-        f.write(f"    format: {args.format}\n")
-        f.write(f"    keys: {args.keys}\n\n")
+        f.write(f"    input directory:  ../{os.path.basename(args.logs)}\n")
+        f.write(f"    output directory: ../{os.path.basename(dir_out)}\n")
+        f.write(f"    dbc-filename:     {os.path.basename(args.dbc)}\n")
+        f.write(f"    append:           {args.append}\n")
+        f.write(f"    nonrecursive:     {args.nonrecursive}\n")
+        f.write(f"    ignoreexisting:   {args.ignoreexisting}\n")
+        f.write(f"    format:           {args.format}\n")
+        f.write(f"    keys:             {args.keys}\n\n")
 
         f.write("Decoding Summary:\n")
-        f.write(f"   n_files: {len(df_summary)}")
+        f.write(f"   n_files: {len(df_summary)}\n\n")
 
         f.write("Data Summary:\n")
-        f.write(df_summary.to_string(index=False))
+        f.write(df_summary.to_string(index=True))
 
 
 def write(dir_out, df, fname_out, format, verbose):
@@ -139,22 +139,18 @@ def main():
         dirs_out = []
         for f in filepaths_logs:
             rel_path = os.path.relpath(os.path.dirname(f), start=args.logs)
-        dirs_out.append(os.path.join(args.outdir, rel_path)) 
+            if rel_path == ".":
+                dirs_out.append(args.outdir)
+            else:
+                dirs_out.append(os.path.join(args.outdir, rel_path)) 
 
     # output names
     filenames_out = []
-    if args.outdir == 'input directory' and not args.append:
-        for f in filepaths_logs:
-            filename_out = os.path.splitext(os.path.basename(f))[0]
-            filename_out += "_" + args.keys + args.format
-            filenames_out.append(filename_out)
-    else:
-        for f in filepaths_logs_rel:
-            n0 = os.path.normpath(os.path.splitext(f)[0])
-            n0 = n0.replace(os.sep, '-')
-            n0 = n0 + "_" + args.keys + args.format
-            filename_out = n0
-            filenames_out.append(filename_out)
+    for f in filepaths_logs:
+        filename_out = os.path.splitext(os.path.basename(f))[0]
+        filename_out += "_" + args.keys + args.format
+        filenames_out.append(filename_out)
+
 
     # decode can files
     df_list = []
@@ -181,10 +177,11 @@ def main():
             if args.append:
                 df_list.append(df_i)
             else:
-                summary.append(summarize(fname_out, df_i))
+                rel_filepath = os.path.relpath(os.path.join(dir_out, fname_out), start=dir_out_root)
+                summary.append(summarize(rel_filepath, df_i))
                 write(dir_out, df_i, fname_out, args.format, not args.mute)
     summary = pd.concat(summary, axis=1)
-    write_summary(dir_out_root, summary)
+    write_decode_log(dir_out_root, summary, args)
                 
     if n_empty >= len(filepaths_logs):
         print(f"All logfiles were empty!")
