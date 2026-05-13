@@ -183,19 +183,27 @@ def main():
             rel_filepath = os.path.relpath(os.path.join(dir_out, fname_out), start=dir_out_root)
             print(f"   {f}")
         
-            df_i = can.process_can(f, filepath_dbc)
+            try:
+                df_i = can.process_can(f, filepath_dbc)
+            except Exception:
+                failed.append(f"{rel_filepath}: failed to decode CAN file.")
+                n_failed += 1
+                print(f'   ---> Failed: Could not decode!')
+                continue
 
             if df_i.shape[0] < 1:
                 print(f"Logfile '{f}' was empty!")
                 n_empty += 1
                 empty.append(rel_filepath)
+                print(f'   ---> file empty')
                 continue
             
             try:
                 df_i = can.extract_canlog_columns(df_i, args.keys)
             except Exception:
-                failed.append(rel_filepath)
+                failed.append(f"{rel_filepath}: expected data columns not found.")
                 n_failed += 1
+                print(f'   ---> Failed: Expected data columns not found!')
                 continue
 
             if args.append:
