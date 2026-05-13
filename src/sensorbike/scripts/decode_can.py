@@ -54,7 +54,7 @@ def summarize(fname, df):
 
     return summary
 
-def write_decode_log(dir_out, df_summary, args):
+def write_decode_log(dir_out, df_summary, args, empty, failed):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = os.path.join(dir_out, f"{timestamp}_can-decoding-log.txt")
@@ -75,7 +75,21 @@ def write_decode_log(dir_out, df_summary, args):
         f.write(f"    keys:             {args.keys}\n\n")
 
         f.write("Decoding Summary:\n")
-        f.write(f"   n_files: {len(df_summary)}\n\n")
+        f.write(f"   n_files:  {len(df_summary)}\n")
+        f.write(f"   n_empty:  {len(empty)}\n")
+        f.write(f"   n_failed: {len(failed)}\n\n")
+
+        if len(empty) > 0:
+            f.write("Empty Files:\n")
+            for fname in empty:
+                f.write(f"    {fname}\n")
+            f.write("\n")
+        
+        if len(failed) > 0:
+            f.write("Decoding Failed:\n")
+            for fname in failed:
+                f.write(f"    {fname}\n")
+            f.write("\n")
 
         f.write("Data Summary:\n")
         f.write(df_summary.to_string(index=True))
@@ -161,18 +175,28 @@ def main():
             print("Decoding and writing ...")
 
     n_empty = 0
+    n_failed = 0
+    failed = []
+    empty = []
     summary = [] 
     for dir_out, f, fname_out in zip(dirs_out, filepaths_logs, filenames_out):
+            rel_filepath = os.path.relpath(os.path.join(dir_out, fname_out), start=dir_out_root)
             print(f"   {f}")
-            
+        
             df_i = can.process_can(f, filepath_dbc)
 
             if df_i.shape[0] < 1:
                 print(f"Logfile '{f}' was empty!")
                 n_empty += 1
+                empty.append(rel_filepath)
                 continue
             
-            df_i = can.extract_canlog_columns(df_i, args.keys)
+            try:
+                df_i = can.extract_canlog_columns(df_i, args.keys)
+            except KeyError:
+                failed.append(rel_filepath)
+                n_failed += 1
+                continue
 
             if args.append:
                 df_list.append(df_i)
@@ -181,7 +205,7 @@ def main():
                 summary.append(summarize(rel_filepath, df_i))
                 write(dir_out, df_i, fname_out, args.format, not args.mute)
     summary = pd.concat(summary, axis=1)
-    write_decode_log(dir_out_root, summary, args)
+    write_decode_log(dir_out_root, summary, args, empty, failed)
                 
     if n_empty >= len(filepaths_logs):
         print(f"All logfiles were empty!")
