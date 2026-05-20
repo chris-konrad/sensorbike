@@ -357,7 +357,7 @@ def extract_canlog_columns(df, mode):
             'yaw': 'yaw_rad',
             'pitch': 'pitch_rad',
             'roll': 'roll_rad',
-            'ws_rear': 'wheelspeed_rear_rev/s',
+            'ws_rear': 'wheelspeed_rear_m/s',
             'LWS_ANGLE': 'steer_deg',
             'LWS_SPEED': 'steer_rate_deg/s',
         }
