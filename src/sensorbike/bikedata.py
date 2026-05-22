@@ -911,6 +911,17 @@ class BalanceAssistLogDataManager(DataManager):
         )
         trk.figures = {"timesync": fig3, "drift": figdrift}
 
+        # check for duplicate rows in trk.t and trk.data
+        # this is caused by the can logger which might have the same timestamp as last timestamp of one file and first of the next file
+        diff_t = np.diff(trk.t)
+        duplicates = np.argwhere(diff_t == dt.timedelta(seconds=0))
+        if not duplicates.size == 0:
+            for duplicate_id in duplicates:
+                duplicate_id = duplicate_id[0]      # extract the integer
+                if np.array_equal(trk.data[duplicate_id,:], trk.data[duplicate_id+1,:]):
+                    trk.data = np.delete(trk.data,duplicate_id,axis=0)     # if also the data is equal we delete the row
+                    trk.t = np.delete(trk.t,duplicate_id)
+
         return trk
 
     def load_gnss_imu(self, run_name):
