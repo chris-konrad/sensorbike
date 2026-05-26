@@ -765,6 +765,19 @@ class BalanceAssistLogDataManager(DataManager):
         else:
             raise NotImplementedError(f"Loading CAN logs of filetype {can_files[0]} is not supported!")
         
+        # there might be a duplicate timestamp of the can logger, we want to detect it and merge the rows
+        diff_t = np.diff(data.index)
+        duplicates = np.argwhere(diff_t == 0)
+        i = 0                       # in case of multiple duplicates we need to shift the index because we are deleting rows
+        for entry in duplicates:
+            duplicate_id = entry[0] - i
+            with warnings.catch_warnings(action="ignore"): 
+            # ignore warning when taking the mean of two nan's
+                merged = np.nanmean(data.iloc[duplicate_id:duplicate_id+2,:],axis=0)
+            data.iloc[duplicate_id] = merged                            # set the combined row of data
+            data = data.iloc[np.arange(len(data)) != duplicate_id+1]    # remove the second row from the dataframe
+            i = i+1
+
         return data
 
 
