@@ -629,7 +629,8 @@ class InstrumentedBicycleData():
         self.states_filtered = BicycleStates(f"Filtered states {self.name}", self.data_raw.t[convergence_period:],
                                              states_smoothed[convergence_period:,:9], reference_frame='N', metadata=metadata)
         self.states_filtered = self.states_filtered.transform_reference(self.desired_reference_frame)
-        self.states_filtered.figures = figs
+        if plot:
+            self.states_filtered.figures = figs
         
         if verbose:
             print("done!")
