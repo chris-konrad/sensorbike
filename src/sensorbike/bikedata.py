@@ -32,7 +32,7 @@ from sklearn.linear_model import RANSACRegressor
 from pathlib import Path
 
 # own imports
-from trajdatamanager.datamanager import Track, DataManager
+from trajdatamanager.datamanager import Track, DataManager, read_metadata_yaml
 from trajdatamanager.gnss import RTKLibGNSSManager, RTKLibGNSSTrack
 from trajdatamanager.utils import to_finite
 
@@ -1076,7 +1076,7 @@ class BicycleStates(Track):
         super().__init__(track_id, class_id, t, data, metadata, yaw_feature_index=yaw_feature_index, data_feature_keys=self.FEATURES)
 
         if reference_frame not in self.REF_FRAMES:
-            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
+            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{reference_frame}'.")
         self.reference_frame=reference_frame
 
 
@@ -1483,3 +1483,48 @@ def read_yaml(filepath):
         config = yaml.safe_load(f)
 
     return config
+
+
+def read_BicycleStates_from_file(filepath_csv, filepath_metadata, track_id):
+    """
+    Read back a BicycleStates-object that has been written to a file using 
+    BicycleStates.write_csv(..., write_metadata=True)
+
+    Parameters
+    --------
+    filepath_csv : str
+        The path of the csv-file containing the trajectory data
+    filepath_metadata : str
+        The path of the yaml-file containing the metadata
+    track_id : any
+        Identifier of this track
+
+    Returns
+    --------
+    BicycleStatesTrack
+        A BicycleStates-object that contains the read data
+    """
+
+    df = pd.read_csv(filepath_csv, sep=';', index_col=0)
+
+    # metadata
+    metadata = read_metadata_yaml(filepath_metadata)
+
+    # time
+    t = pd.to_datetime(metadata['t_begin']) + pd.to_timedelta(np.arange(df.shape[0])*metadata['sample_time'], unit='s')
+    with warnings.catch_warnings():     #ignore warning on to_datetime behavior change that is adressed by np.array()
+        warnings.simplefilter('ignore', FutureWarning)
+        t = np.array(t.to_pydatetime())
+
+    # kinematics
+    keys = ['x', 'y', 'psi', 'v', 'phi', 'delta', 'psidot', 'phidot', 'deltadot']
+    data = df[keys].to_numpy()
+
+    # remove items from dictionary that were not in original metadata
+    rmv_key = ['class_id','duration','n_samples','relative_time','sample_time','t_begin','t_end']
+    for key in rmv_key:
+        metadata.pop(key)
+
+    BicycleStatesTrack = BicycleStates(track_id, t, data, 'N', metadata=metadata)
+
+    return BicycleStatesTrack
