@@ -1106,7 +1106,7 @@ class BicycleStates(Track):
             raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
 
         if frame != self.reference_frame:
-            states_flip = ['psi', 'psidot', 'delta', 'deltadot']
+            states_flip = ['y', 'psi', 'psidot', 'delta', 'deltadot']
             idx_flip = [self.data_feature_keys.index(s) for s in states_flip]
 
             self.data[:,idx_flip] *= -1
@@ -1495,7 +1495,8 @@ def read_BicycleStates_from_file(filepath_csv, filepath_metadata, track_id):
     filepath_csv : str
         The path of the csv-file containing the trajectory data
     filepath_metadata : str
-        The path of the yaml-file containing the metadata
+        The path of the yaml-file containing the metadata. It is assumed
+        that the metadata contains an entry 'reference_frame' (equal to 'E' or 'N')
     track_id : any
         Identifier of this track
 
