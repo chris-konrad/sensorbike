@@ -1525,6 +1525,8 @@ def read_BicycleStates_from_file(filepath_csv, filepath_metadata, track_id):
     for key in rmv_key:
         metadata.pop(key)
 
-    BicycleStatesTrack = BicycleStates(track_id, t, data, 'N', metadata=metadata)
+    reference_frame = metadata['reference_frame']       # should be 'E' or 'N' (will be checked when creating BicycleStates)
+
+    BicycleStatesTrack = BicycleStates(track_id, t, data, reference_frame, metadata=metadata)
 
     return BicycleStatesTrack
