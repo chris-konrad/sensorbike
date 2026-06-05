@@ -1166,6 +1166,60 @@ class BicycleStates(Track):
             frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
             ax.add_artist(frametext)
         return 
+    
+
+    def get_xyz_from_point_on_bike(self, x_point, y_point, z_point, bike_reference_frame='N'):
+        """
+        Get the xy-coordinates from a point on the bike, specified by x_point, y_point,
+        z_point in the bicycle reference frame. This assumes the point to be rigidly
+        attached to the bicycle rear frame
+        TODO: this assumes self['x'] and self['y'] correspond to rear wheel contact point. Check with Christoph if this is true
+
+        Parameters
+        ---------
+        x_point : float
+            x-coordinate of the point on the bike in the bike reference frame
+        y_point : float
+            y-coordinate of the point on the bike in the bike reference frame
+        z_point : float
+            z-coordinate of the point on the bike in the bike reference frame
+        bike_reference_frame : str, optional
+            Reference frame in which x_point, y_point and z_point are given
+            Options are 'E' and 'N'. The N-frame is the frame with the x-direction
+            pointing forwards (along the bike), y pointing to the right side of the
+            bike and z pointing into the ground. The E-frame is the frame with the
+            x-direction pointing forwards (along the bike), y pointing to the left
+            side of the bike and z pointing upwards. The default is 'N'.
+
+        Returns
+        ---------
+        x_prime : np.array, size 1 x n
+            x-coordinates of the point on the bike during its trajectory
+        y_prime : np.array, size 1 x n
+            y-coordinates of the point on the bike during its trajectory
+        z_prime : np.array, size 1 x n
+            z-coordinates of the point on the bike during its trajectory
+        x_prime, y_prime and z_prime are given in the same reference frame as the
+        original BicycleStates-object.
+        """
+        x = self['x']
+        y = self['y']
+        psi = self['psi']   # yaw angle
+        phi = self['phi']   # roll angle
+
+        # if world reference frame and bike reference frame are not the same, we transform the bike reference frame
+        if bike_reference_frame != self.reference_frame:
+            y_point = -y_point
+            z_point = -z_point
+
+        z_roll = z_point*np.cos(phi) + y_point*np.sin(phi)      # z-coordinate of point on bike after applying the roll angle (in bike reference frame)
+        y_roll = -z_point*np.sin(phi) + y_point*np.cos(phi)     # y-coordinate of point on bike after applying the roll angle (in bike reference frame)
+       
+        x_prime = x + x_point*np.cos(psi) - y_roll*np.sin(psi)  # x_coordinate of point on bike in world reference frame
+        y_prime = y + x_point*np.sin(psi) + y_roll*np.cos(psi)  # y_coordinate of point on bike in world reference frame
+        z_prime = z_roll
+
+        return x_prime, y_prime, z_prime
 
 
 def to_continous_angle(angle, tol = 0.75):
