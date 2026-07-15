@@ -32,7 +32,7 @@ from sklearn.linear_model import RANSACRegressor
 from pathlib import Path
 
 # own imports
-from trajdatamanager.datamanager import Track, DataManager
+from trajdatamanager.datamanager import Track, DataManager, read_metadata_yaml
 from trajdatamanager.gnss import RTKLibGNSSManager, RTKLibGNSSTrack
 from trajdatamanager.utils import to_finite
 
@@ -1091,7 +1091,7 @@ class BicycleStates(Track):
         super().__init__(track_id, class_id, t, data, metadata, yaw_feature_index=yaw_feature_index, data_feature_keys=self.FEATURES)
 
         if reference_frame not in self.REF_FRAMES:
-            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
+            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{reference_frame}'.")
         self.reference_frame=reference_frame
 
 
@@ -1121,7 +1121,7 @@ class BicycleStates(Track):
             raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
 
         if frame != self.reference_frame:
-            states_flip = ['psi', 'psidot', 'delta', 'deltadot']
+            states_flip = ['y', 'psi', 'psidot', 'delta', 'deltadot']
             idx_flip = [self.data_feature_keys.index(s) for s in states_flip]
 
             self.data[:,idx_flip] *= -1
@@ -1181,6 +1181,60 @@ class BicycleStates(Track):
             frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
             ax.add_artist(frametext)
         return 
+    
+
+    def get_xyz_from_point_on_bike(self, x_point, y_point, z_point, bike_reference_frame='N'):
+        """
+        Get the xy-coordinates from a point on the bike, specified by x_point, y_point,
+        z_point in the bicycle reference frame. This assumes the point to be rigidly
+        attached to the bicycle rear frame
+        TODO: this assumes self['x'] and self['y'] correspond to rear wheel contact point. Check with Christoph if this is true
+
+        Parameters
+        ---------
+        x_point : float
+            x-coordinate of the point on the bike in the bike reference frame
+        y_point : float
+            y-coordinate of the point on the bike in the bike reference frame
+        z_point : float
+            z-coordinate of the point on the bike in the bike reference frame
+        bike_reference_frame : str, optional
+            Reference frame in which x_point, y_point and z_point are given
+            Options are 'E' and 'N'. The N-frame is the frame with the x-direction
+            pointing forwards (along the bike), y pointing to the right side of the
+            bike and z pointing into the ground. The E-frame is the frame with the
+            x-direction pointing forwards (along the bike), y pointing to the left
+            side of the bike and z pointing upwards. The default is 'N'.
+
+        Returns
+        ---------
+        x_prime : np.array, size 1 x n
+            x-coordinates of the point on the bike during its trajectory
+        y_prime : np.array, size 1 x n
+            y-coordinates of the point on the bike during its trajectory
+        z_prime : np.array, size 1 x n
+            z-coordinates of the point on the bike during its trajectory
+        x_prime, y_prime and z_prime are given in the same reference frame as the
+        original BicycleStates-object.
+        """
+        x = self['x']
+        y = self['y']
+        psi = self['psi']   # yaw angle
+        phi = self['phi']   # roll angle
+
+        # if world reference frame and bike reference frame are not the same, we transform the bike reference frame
+        if bike_reference_frame != self.reference_frame:
+            y_point = -y_point
+            z_point = -z_point
+
+        z_roll = z_point*np.cos(phi) + y_point*np.sin(phi)      # z-coordinate of point on bike after applying the roll angle (in bike reference frame)
+        y_roll = -z_point*np.sin(phi) + y_point*np.cos(phi)     # y-coordinate of point on bike after applying the roll angle (in bike reference frame)
+       
+        x_prime = x + x_point*np.cos(psi) - y_roll*np.sin(psi)  # x_coordinate of point on bike in world reference frame
+        y_prime = y + x_point*np.sin(psi) + y_roll*np.cos(psi)  # y_coordinate of point on bike in world reference frame
+        z_prime = z_roll
+
+        return x_prime, y_prime, z_prime
 
 
 def to_continous_angle(angle, tol = 0.75):
@@ -1498,3 +1552,51 @@ def read_yaml(filepath):
         config = yaml.safe_load(f)
 
     return config
+
+
+def read_BicycleStates_from_file(filepath_csv, filepath_metadata, track_id):
+    """
+    Read back a BicycleStates-object that has been written to a file using 
+    BicycleStates.write_csv(..., write_metadata=True)
+
+    Parameters
+    --------
+    filepath_csv : str
+        The path of the csv-file containing the trajectory data
+    filepath_metadata : str
+        The path of the yaml-file containing the metadata. It is assumed
+        that the metadata contains an entry 'reference_frame' (equal to 'E' or 'N')
+    track_id : any
+        Identifier of this track
+
+    Returns
+    --------
+    BicycleStatesTrack
+        A BicycleStates-object that contains the read data
+    """
+
+    df = pd.read_csv(filepath_csv, sep=';', index_col=0)
+
+    # metadata
+    metadata = read_metadata_yaml(filepath_metadata)
+
+    # time
+    t = pd.to_datetime(metadata['t_begin']) + pd.to_timedelta(np.arange(df.shape[0])*metadata['sample_time'], unit='s')
+    with warnings.catch_warnings():     #ignore warning on to_datetime behavior change that is adressed by np.array()
+        warnings.simplefilter('ignore', FutureWarning)
+        t = np.array(t.to_pydatetime())
+
+    # kinematics
+    keys = ['x', 'y', 'psi', 'v', 'phi', 'delta', 'psidot', 'phidot', 'deltadot']
+    data = df[keys].to_numpy()
+
+    # remove items from dictionary that were not in original metadata
+    rmv_key = ['class_id','duration','n_samples','relative_time','sample_time','t_begin','t_end']
+    for key in rmv_key:
+        metadata.pop(key)
+
+    reference_frame = metadata['reference_frame']       # should be 'E' or 'N' (will be checked when creating BicycleStates)
+
+    BicycleStatesTrack = BicycleStates(track_id, t, data, reference_frame, metadata=metadata)
+
+    return BicycleStatesTrack
