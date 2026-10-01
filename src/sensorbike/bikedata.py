@@ -24,6 +24,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import datetime as dt
+import sympy as sm
+import sympy.physics.mechanics as me
 
 from matplotlib.offsetbox import AnchoredText
 
@@ -1085,7 +1087,7 @@ class BicycleStates(Track):
 
         Available frames are the 'N' frame, typically used for bicycle dynamics
         (N.x and N.y forming the ground plane, N.z pointing downwards), or the 'E' frame, 
-        common in traffic simulation (E.x and E.y forming the ground plane, E.z pointing downwards). 
+        common in traffic simulation (E.x and E.y forming the ground plane, E.z pointing upwards). 
         N is rotated by pi around E.x with respect to E. Additionally, steer angles and 
         rates are mirrored: E_delta(dot) = - N_delta(dot). In the N-frame the positive steer axis point 
         downwards along the steer column. 
@@ -1168,28 +1170,26 @@ class BicycleStates(Track):
         return 
     
 
-    def get_xyz_from_point_on_bike(self, x_point, y_point, z_point, bike_reference_frame='N'):
+    def get_xyz_from_point_on_bike(self, x_point, y_point, z_point):
         """
-        Get the xy-coordinates from a point on the bike, specified by x_point, y_point,
-        z_point in the bicycle reference frame. This assumes the point to be rigidly
-        attached to the bicycle rear frame
-        TODO: this assumes self['x'] and self['y'] correspond to rear wheel contact point. Check with Christoph if this is true
+        Get the xyz-coordinates from a point on the bike, specified by x_point, y_point,
+        z_point in the bicycle reference frame wrt the rear wheel contact point.
+        The bicycle reference frame B is defined with x forward (along the bike), 
+        y pointing to the left of the rider, and z pointing up.
+        This assumes the point to be rigidly attached to the bicycle rear frame.
+        The output of this function is in self.reference_frame
 
         Parameters
         ---------
         x_point : float
-            x-coordinate of the point on the bike in the bike reference frame
+            x-coordinate of the point on the bike wrt the rear wheel contact point
+            in the bike reference frame B
         y_point : float
-            y-coordinate of the point on the bike in the bike reference frame
+            y-coordinate of the point on the bike wrt the rear wheel contact point 
+            in the bike reference frame B
         z_point : float
-            z-coordinate of the point on the bike in the bike reference frame
-        bike_reference_frame : str, optional
-            Reference frame in which x_point, y_point and z_point are given
-            Options are 'E' and 'N'. The N-frame is the frame with the x-direction
-            pointing forwards (along the bike), y pointing to the right side of the
-            bike and z pointing into the ground. The E-frame is the frame with the
-            x-direction pointing forwards (along the bike), y pointing to the left
-            side of the bike and z pointing upwards. The default is 'N'.
+            z-coordinate of the point on the bike wrt the rear wheel contact point
+            in the bike reference frame B
 
         Returns
         ---------
@@ -1207,17 +1207,38 @@ class BicycleStates(Track):
         psi = self['psi']   # yaw angle
         phi = self['phi']   # roll angle
 
-        # if world reference frame and bike reference frame are not the same, we transform the bike reference frame
-        if bike_reference_frame != self.reference_frame:
-            y_point = -y_point
-            z_point = -z_point
+        E = me.ReferenceFrame('E')      # E-frame (local frame with z pointing up)
+        N = me.ReferenceFrame('N')      # N-frame (local frame with z pointing down)
+        B = me.ReferenceFrame('B')      # B-frame (bicycle reference frame as described above)
+        x_E, y_E, psi_E, phi_E = me.dynamicsymbols('x_E, y_E, psi_E, phi_E')    # sympy symbols for the coordinates (in the E-frame)
 
-        z_roll = z_point*np.cos(phi) + y_point*np.sin(phi)      # z-coordinate of point on bike after applying the roll angle (in bike reference frame)
-        y_roll = -z_point*np.sin(phi) + y_point*np.cos(phi)     # y-coordinate of point on bike after applying the roll angle (in bike reference frame)
-       
-        x_prime = x + x_point*np.cos(psi) - y_roll*np.sin(psi)  # x_coordinate of point on bike in world reference frame
-        y_prime = y + x_point*np.sin(psi) + y_roll*np.cos(psi)  # y_coordinate of point on bike in world reference frame
-        z_prime = z_roll
+        # orient reference frames
+        N.orient_axis(E,sm.pi,E.x)
+        B.orient_body_fixed(E,(psi_E,phi_E,0),'ZXZ')
+
+        # define vectors
+        r_O_rwcp = x_E*E.x + y_E*E.y                        # vector from the origin to the rear wheel contact point
+        r_rwcp_P = x_point*B.x + y_point*B.y + z_point*B.z  # vector from the rear wheel contact point to point of interest
+        r_O_P = r_O_rwcp + r_rwcp_P                         # vector from the origin to point of interest
+
+        if self.reference_frame == 'E':
+            eval_point = sm.lambdify([x_E,y_E,psi_E,phi_E],r_O_P.to_matrix(E))   # numerical function to evaluate the point's coordinates in the E-frame
+            coords = np.zeros((3,self.n))
+            for i in range(self.n):
+                coords[:,i] = np.squeeze(eval_point(x[i],y[i],psi[i],phi[i]))
+        elif self.reference_frame == 'N':
+            eval_point = sm.lambdify([x_E,y_E,psi_E,phi_E],r_O_P.to_matrix(N))   # numerical function to evaluate the point's coordinates in the N-frame
+            coords = np.zeros((3,self.n))
+            y *= -1         # because eval_point expects coordinates in the E-frame we have to convert y and psi (x and phi are the same in the E- and N-frame)
+            psi *= -1
+            for i in range(self.n):
+                coords[:,i] = np.squeeze(eval_point(x[i],y[i],psi[i],phi[i]))
+        else:
+            raise ValueError(f'self.reference_frame should be \'E\' or \'N\', instead it was {self.reference_frame}')
+        
+        x_prime = coords[0,:]
+        y_prime = coords[1,:]
+        z_prime = coords[2,:]
 
         return x_prime, y_prime, z_prime
 
