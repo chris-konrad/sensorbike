@@ -414,7 +414,7 @@ class InstrumentedBicycleData():
 
         if self.can_filename_list is not None:
             include = [Path(p).parts for p in self.can_filename_list]
-            can_files = [p for p in can_files if any(p.parts[-len(rp):]==tuple(rp) for rp in include)]    
+            can_files = [p for p in can_files if any(p.parts[-len(rp):]==tuple(rp) for rp in include)]   
         can_files = [str(p) for p in can_files]
 
         trk_can = dataman.load_track(can_files, self.filenames_bike_gnss)
@@ -1180,7 +1180,7 @@ class BicycleStates(Track):
         if draw_referenceframe:
             frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
             ax.add_artist(frametext)
-        return 
+        return ax
 
 
 def to_continous_angle(angle, tol = 0.75):
