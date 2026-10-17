@@ -24,7 +24,7 @@ dependencies = [
 	"filterpy",
 	"bicycleparameters",
 	"pyarrow",
-	"trajdatamanager"
+	"trajdatamanager>=3.0.0"
 ]
 
 
