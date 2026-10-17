@@ -1,0 +1,15 @@
+name: sensorbike
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - sympy
+  - matplotlib
+  - scipy
+  - pandas
+  - scikit-learn
+  - bicycleparameters
+  - pyarrow
+  - filterpy

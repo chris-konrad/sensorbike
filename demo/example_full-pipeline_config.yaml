@@ -1,0 +1,40 @@
+# A configuration file demonstrating how to setup the sensorbike processing pipeline. 
+general:
+    subdir_data_raw: data\\raw      # The location of the raw data relative to the base directory specified as a script argument
+    experiment_name: testday_1      # Selects one experiment day from the full dataset
+    trial_name: example             # This assigns a custom name to this processing session. Can be anything
+    filename_can: '00001044\\00000001.parquet' # Picks a specific CAN log for this processing session.
+    t_s: 0.01                       # Target sampling rate for the processed data.
+    t_begin: 24.09.2024 09:25:00    # We crop the data to reduce the runtime of this demo to [t_begin, t_end]
+    t_end: 24.09.2024 09:26:00      
+filter_settings:                # The UKF filter can be run with default parameters (see sensorbike.ukf.get_default_filter_settings()) or with a custom configuration like below. The configuration below is approximately equal to the default settings.
+    integration_method: midpoint
+    measurement_noise_std: 
+        gnss:
+            position: 0.015     # [m], Will be added to dynamic RTKLib uncertainties. Additionaly noise due to wobbly pole, guess; 
+            velocity: 0.106     # [m/s], Error propagation of wobbly pole noise
+        imu: #Datasheet values from https://docs.sparkfun.com/SparkFun_VR_IMU_Breakout_BNO086_QWIIC/assets/component_documentation/BNO080_085-Datasheet_v1.16.pdf
+            roll: 1.05          # [rad], unused
+            yaw: 0.06           # [rad], unused
+            gyro: 0.054         # [rad/s], datasheet value 
+            accely: 0.30        # [m/s2], datasheet value 0.35 slightly increased due to road roughness
+            accelz: 5.00        # [m/s2], datasheet value 0.35 strongly increased due to road roughness
+        steerencoder:
+            rate: 0.05          # [rad/s], guess
+            angle: 0.03         # [rad], guess
+        speedometer:
+            v: 0.1              # [m/s], guess
+    process_noise_std:
+        x: 0.000001             # [m], no additional uncertainty in position dynamics
+        y: 0.000001             # [m], no additional uncertainty in position dynamics
+        psi: 0.0175             # [rad], moderate uncertainties to account for model simplifications
+        phi: 0.0035             # [rad], moderate uncertainties to account for model simplifications
+        delta: 0.0175           # [rad], moderate uncertainties to account for model simplifications
+        dpsi: 0.3491            # [rad/s], large uncertainties due to missing angular rates in gyroz measurement model
+        dphi: 0.2618            # [rad/s], large uncertainties in roll and steer rates due to zero roll/steer torque assumption
+        ddelta: 0.6981          # [rad/s], large uncertainties in roll and steer rates due to zero roll/steer torque assumption
+        v: 1.0                  # [m/s], large uncertainties in speed due to const. speed. assumption
+        b_delta: 0.0002         # [rad], tiny -> steer bias should be const.
+        b_gyro: 0.0002          # [rad/s], unused, tiny -> gyro bias should be const.
+        eps: 0.0002             # [rad/s], unused, tiny -> imu<->bike rotation should be constant
+    
