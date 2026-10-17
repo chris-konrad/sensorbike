@@ -24,6 +24,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import datetime as dt
+import sympy as sm
+import sympy.physics.mechanics as me
 
 from matplotlib.offsetbox import AnchoredText
 
@@ -32,7 +34,7 @@ from sklearn.linear_model import RANSACRegressor
 from pathlib import Path
 
 # own imports
-from trajdatamanager.datamanager import Track, DataManager
+from trajdatamanager.datamanager import Track, DataManager, read_metadata_yaml
 from trajdatamanager.gnss import RTKLibGNSSManager, RTKLibGNSSTrack
 from trajdatamanager.utils import to_finite
 
@@ -1091,7 +1093,7 @@ class BicycleStates(Track):
         super().__init__(track_id, class_id, t, data, metadata, yaw_feature_index=yaw_feature_index, data_feature_keys=self.FEATURES)
 
         if reference_frame not in self.REF_FRAMES:
-            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
+            raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{reference_frame}'.")
         self.reference_frame=reference_frame
 
 
@@ -1100,7 +1102,7 @@ class BicycleStates(Track):
 
         Available frames are the 'N' frame, typically used for bicycle dynamics
         (N.x and N.y forming the ground plane, N.z pointing downwards), or the 'E' frame, 
-        common in traffic simulation (E.x and E.y forming the ground plane, E.z pointing downwards). 
+        common in traffic simulation (E.x and E.y forming the ground plane, E.z pointing upwards). 
         N is rotated by pi around E.x with respect to E. Additionally, steer angles and 
         rates are mirrored: E_delta(dot) = - N_delta(dot). In the N-frame the positive steer axis point 
         downwards along the steer column. 
@@ -1121,7 +1123,7 @@ class BicycleStates(Track):
             raise ValueError(f"'frame' must be one of {self.FRAMES}. Instead it was '{frame}'.")
 
         if frame != self.reference_frame:
-            states_flip = ['psi', 'psidot', 'delta', 'deltadot']
+            states_flip = ['y', 'psi', 'psidot', 'delta', 'deltadot']
             idx_flip = [self.data_feature_keys.index(s) for s in states_flip]
 
             self.data[:,idx_flip] *= -1
@@ -1180,7 +1182,81 @@ class BicycleStates(Track):
         if draw_referenceframe:
             frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
             ax.add_artist(frametext)
+        
         return ax
+      
+      
+    def get_xyz_from_point_on_bike(self, x_point, y_point, z_point):
+        """
+        Get the xyz-coordinates from a point on the bike, specified by x_point, y_point,
+        z_point in the bicycle reference frame wrt the rear wheel contact point.
+        The bicycle reference frame B is defined with x forward (along the bike), 
+        y pointing to the left of the rider, and z pointing up.
+        This assumes the point to be rigidly attached to the bicycle rear frame.
+        The output of this function is in self.reference_frame
+
+        Parameters
+        ---------
+        x_point : float
+            x-coordinate of the point on the bike wrt the rear wheel contact point
+            in the bike reference frame B
+        y_point : float
+            y-coordinate of the point on the bike wrt the rear wheel contact point 
+            in the bike reference frame B
+        z_point : float
+            z-coordinate of the point on the bike wrt the rear wheel contact point
+            in the bike reference frame B
+
+        Returns
+        ---------
+        x_prime : np.array, size 1 x n
+            x-coordinates of the point on the bike during its trajectory
+        y_prime : np.array, size 1 x n
+            y-coordinates of the point on the bike during its trajectory
+        z_prime : np.array, size 1 x n
+            z-coordinates of the point on the bike during its trajectory
+        x_prime, y_prime and z_prime are given in the same reference frame as the
+        original BicycleStates-object.
+        """
+        x = self['x']
+        y = self['y']
+        psi = self['psi']   # yaw angle
+        phi = self['phi']   # roll angle
+
+        E = me.ReferenceFrame('E')      # E-frame (local frame with z pointing up)
+        N = me.ReferenceFrame('N')      # N-frame (local frame with z pointing down)
+        B = me.ReferenceFrame('B')      # B-frame (bicycle reference frame as described above)
+        x_E, y_E, psi_E, phi_E = me.dynamicsymbols('x_E, y_E, psi_E, phi_E')    # sympy symbols for the coordinates (in the E-frame)
+
+        # orient reference frames
+        N.orient_axis(E,sm.pi,E.x)
+        B.orient_body_fixed(E,(psi_E,phi_E,0),'ZXZ')
+
+        # define vectors
+        r_O_rwcp = x_E*E.x + y_E*E.y                        # vector from the origin to the rear wheel contact point
+        r_rwcp_P = x_point*B.x + y_point*B.y + z_point*B.z  # vector from the rear wheel contact point to point of interest
+        r_O_P = r_O_rwcp + r_rwcp_P                         # vector from the origin to point of interest
+
+        if self.reference_frame == 'E':
+            eval_point = sm.lambdify([x_E,y_E,psi_E,phi_E],r_O_P.to_matrix(E))   # numerical function to evaluate the point's coordinates in the E-frame
+            coords = np.zeros((3,self.n))
+            for i in range(self.n):
+                coords[:,i] = np.squeeze(eval_point(x[i],y[i],psi[i],phi[i]))
+        elif self.reference_frame == 'N':
+            eval_point = sm.lambdify([x_E,y_E,psi_E,phi_E],r_O_P.to_matrix(N))   # numerical function to evaluate the point's coordinates in the N-frame
+            coords = np.zeros((3,self.n))
+            y *= -1         # because eval_point expects coordinates in the E-frame we have to convert y and psi (x and phi are the same in the E- and N-frame)
+            psi *= -1
+            for i in range(self.n):
+                coords[:,i] = np.squeeze(eval_point(x[i],y[i],psi[i],phi[i]))
+        else:
+            raise ValueError(f'self.reference_frame should be \'E\' or \'N\', instead it was {self.reference_frame}')
+        
+        x_prime = coords[0,:]
+        y_prime = coords[1,:]
+        z_prime = coords[2,:]
+
+        return x_prime, y_prime, z_prime
 
 
 def to_continous_angle(angle, tol = 0.75):
@@ -1498,3 +1574,51 @@ def read_yaml(filepath):
         config = yaml.safe_load(f)
 
     return config
+
+
+def read_BicycleStates_from_file(filepath_csv, filepath_metadata, track_id):
+    """
+    Read back a BicycleStates-object that has been written to a file using 
+    BicycleStates.write_csv(..., write_metadata=True)
+
+    Parameters
+    --------
+    filepath_csv : str
+        The path of the csv-file containing the trajectory data
+    filepath_metadata : str
+        The path of the yaml-file containing the metadata. It is assumed
+        that the metadata contains an entry 'reference_frame' (equal to 'E' or 'N')
+    track_id : any
+        Identifier of this track
+
+    Returns
+    --------
+    BicycleStatesTrack
+        A BicycleStates-object that contains the read data
+    """
+
+    df = pd.read_csv(filepath_csv, sep=';', index_col=0)
+
+    # metadata
+    metadata = read_metadata_yaml(filepath_metadata)
+
+    # time
+    t = pd.to_datetime(metadata['t_begin']) + pd.to_timedelta(np.arange(df.shape[0])*metadata['sample_time'], unit='s')
+    with warnings.catch_warnings():     #ignore warning on to_datetime behavior change that is adressed by np.array()
+        warnings.simplefilter('ignore', FutureWarning)
+        t = np.array(t.to_pydatetime())
+
+    # kinematics
+    keys = ['x', 'y', 'psi', 'v', 'phi', 'delta', 'psidot', 'phidot', 'deltadot']
+    data = df[keys].to_numpy()
+
+    # remove items from dictionary that were not in original metadata
+    rmv_key = ['class_id','duration','n_samples','relative_time','sample_time','t_begin','t_end']
+    for key in rmv_key:
+        metadata.pop(key)
+
+    reference_frame = metadata['reference_frame']       # should be 'E' or 'N' (will be checked when creating BicycleStates)
+
+    BicycleStatesTrack = BicycleStates(track_id, t, data, reference_frame, metadata=metadata)
+
+    return BicycleStatesTrack
