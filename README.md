@@ -220,6 +220,7 @@ df = can.process_can(
 ## Authors
 
 - Christoph M. Konrad, c.m.konrad@tudelft.nl
+- matthijsvdbr0ek
 - Anna Marbus [Part of this toolbox (CAN decoding) was taken from [bicycle-loc-and-state](https://gitlab.tudelft.nl/bicyclelab/bicycle-loc-and-state), developed during her research project.]
 
 ## License
