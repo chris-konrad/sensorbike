@@ -531,6 +531,8 @@ def filter(measurements, uncertainties_gnss,
         
         return R_i
     
+    gnss_first_finite = np.argwhere(np.all(np.isfinite(measurements[:, :2]), axis=1)).flatten()[0]
+    gnssyaw_first_finite = np.argwhere(np.all(np.isfinite(measurements[:, 2:4]), axis=1)).flatten()[0]
 
     def make_initial_state(m, u):
         """ Make the initial state from first measurement """
@@ -541,15 +543,21 @@ def filter(measurements, uncertainties_gnss,
         if np.all(np.isfinite(m[:2])):
             x0[0] = m[0]    #x 
             x0[1] = -m[1]   #y: flip due to E<->N conversion
+        else: #if no measurements available, take the first finite value from later and inflate variance. 
+            x0[0] = measurements[gnss_first_finite, 0]
+            x0[1] = -measurements[gnss_first_finite, 1]
+
         if np.all(np.isfinite(m[2:4])):
             x0[2] = np.arctan2(-m[3], m[2]) #psi: flip vy due to E<->N conversion
+        else: #if no measurements available, take the first finite value from later and inflate variance. 
+            x0[2] = np.arctan2(-measurements[gnssyaw_first_finite, 3], measurements[gnssyaw_first_finite, 2])
+        
         x0[3] = m[10]   #v
         x0[4] = 0       #phi: could be anything
         x0[5] = m[4]    #delta
         x0[6] = m[7]    #psidot: approx. gyro_z
         x0[7] = m[6]    #phidot: approx. gyro_x 
         x0[8] = m[5]    #deltadot
-
 
         P0 = np.zeros((x0.size, x0.size), dtype=float) 
 

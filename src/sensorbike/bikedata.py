@@ -72,6 +72,8 @@ class InstrumentedBicycleData():
         gnss_data_settings = {},
         can_data_settings = {},
         desired_reference_frame = 'N', 
+        gnss_filename_list = None, 
+        can_filename_list = None
     ):
         """
         Create a InstrumentedBicycleData object.
@@ -154,6 +156,13 @@ class InstrumentedBicycleData():
             The E-frame is the frame with x and y directions fixed to the ground 
             and z pointing upwards (as common in traffic engineering and used for 
             cyclistsocialforces). The default is 'N'. 
+        gnss_filename_list : list, optional
+            An explicit list of gnss files (`.pos`) files in `subdir_bike_gnss_solution` to process. Can be a subpath
+            relative to `subdir_bike_gnss_solution`. If None, all `.pos` files are included. Default is None
+        can_filename_list = None
+            An explicit list of can files (`.mf4`, `.txt`, `.parquet`) files in `subdir_bike_gnss_solution` to process. Can be a subpath
+            relative to `subdir_bike_can`. If None, all can files are included. If `filename_can` and `can_filename_list` are both specified
+            `filename_can` must be included in the list. Default is None.
         """
 
         # set up paths and directories
@@ -183,7 +192,9 @@ class InstrumentedBicycleData():
         self.t_s = t_s
         self.name = f"{self.experiment_name}/{self.trial_name}"
         self.is_filtered = False
-        
+        self.gnss_filename_list = gnss_filename_list
+        self.can_filename_list = can_filename_list
+
         # reference frame
         if desired_reference_frame not in ['E', 'N']:
             raise ValueError(f"The reference frame must be 'E' or 'N', instead it was '{desired_reference_frame}'.")
@@ -394,15 +405,19 @@ class InstrumentedBicycleData():
             ftypes = ['.parquet', '.mf4', '.txt']
             for ftype in ftypes:
                 can_files = list(Path(dir_can_log).rglob(f"*{ftype}"))
-                can_files = [str(p) for p in can_files]
                 if can_files:
                     break
             if len(can_files) == 0:
                 raise FileNotFoundError(f"Didn't find any CAN logs in {dir_can_log}! Searched for: {ftypes}")
         elif os.path.isfile(os.path.join(dir_can_log, self.filename_can, )):
-            can_files = [os.path.join(dir_can_log, self.filename_can)]
+            can_files = [Path(os.path.join(dir_can_log, self.filename_can))]
         else:
             FileNotFoundError(f"Can't find filename_can: {self.filename_can}")
+
+        if self.can_filename_list is not None:
+            include = [Path(p).parts for p in self.can_filename_list]
+            can_files = [p for p in can_files if any(p.parts[-len(rp):]==tuple(rp) for rp in include)]   
+        can_files = [str(p) for p in can_files]
 
         trk_can = dataman.load_track(can_files, self.filenames_bike_gnss)
 
@@ -439,7 +454,7 @@ class InstrumentedBicycleData():
         )
 
         # load the track
-        seq = dataman.load_sequence()
+        seq = dataman.load_sequence(include=self.gnss_filename_list)
         
         # crop
         if t_begin is None:
@@ -1167,9 +1182,10 @@ class BicycleStates(Track):
         if draw_referenceframe:
             frametext = AnchoredText(rf'Reference Frame: {{{self.reference_frame}}}', 'lower right')
             ax.add_artist(frametext)
-        return 
-    
-
+        
+        return ax
+      
+      
     def get_xyz_from_point_on_bike(self, x_point, y_point, z_point):
         """
         Get the xyz-coordinates from a point on the bike, specified by x_point, y_point,
